@@ -3,8 +3,8 @@
  * Run setupTrigger manually once and authorize it. Do not run onRegistrationSubmit.
  */
 const CONFIG = {
-  eventId: 'REPLACE_WITH_EVENT_ID',
-  sheetTab: 'REPLACE_WITH_EXACT_RESPONSE_TAB',
+  eventId: 'tech-event-2026',
+  sheetTab: 'Responses',
   // Only override metadata header labels here when HEADERS_FILE overrides them in Python.
   headerOverrides: {},
 };

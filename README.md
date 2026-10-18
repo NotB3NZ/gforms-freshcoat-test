@@ -2,7 +2,7 @@
 
 This project connects your Google Form response Sheet to a Python registration worker, your existing FreshCoat card, email delivery, and a staff-only webcam check-in server.
 
-The code is implemented and locally tested. **Stop at checkpoint 1 below for now.** Google account access, the installed Apps Script trigger, real email delivery, and webcam access still need your participation. No real email has been sent and no server has been deployed or opened publicly.
+The code is implemented and locally tested. **Current checkpoint: manually install the Apps Script trigger.** You confirmed that the service account has Editor access, `init-sheet` succeeded without queuing old responses, and `check-sheet` verified the configured headers with one registration. Email remains disabled. The installed trigger, real email delivery, and webcam access still need your participation. No real email has been sent and no server has been deployed or opened publicly.
 
 ## What was preserved and verified
 
@@ -113,10 +113,14 @@ The client opens the configured spreadsheet ID and exact tab directly. It does n
 
 ## Later checkpoint — install the Apps Script trigger
 
-1. In the **response spreadsheet**, open **Extensions → Apps Script**. Copy `apps-script/form-submit.gs` into the project.
-2. Replace `CONFIG.eventId` and `CONFIG.sheetTab` with the same values as `.env`. Apply metadata header overrides only if you configured them in Python.
-3. Save. Select `setupTrigger` in the function dropdown, click **Run**, and complete Google's sign-in/authorization yourself. This creates an installable **From spreadsheet → On form submit** trigger. Only one account should install it; re-running setup removes that installer's duplicate triggers.
-4. Submit a new test registration using the actual Google Form. Its new response row should show your `event_id`, `state=PENDING`, and `updated_at`. Apps Script **Executions** should show a successful run. Do not manually run `onRegistrationSubmit`; it requires a real submission event.
+The complete local script is `apps-script/form-submit.gs`. It is prepared for `eventId='tech-event-2026'` and `sheetTab='Responses'`, matching `.env`; no metadata header overrides are currently configured. **Editing the local `.gs` file does not install or update anything in Google.**
+
+1. Open your registration spreadsheet and choose **Extensions → Apps Script**.
+2. Inspect the existing files first. If this event registration trigger is already present, replace only its dedicated file. Otherwise, use **+ → Script** to create `RegistrationTrigger.gs` and paste the entire local script there. Do not replace or delete unrelated code. All `.gs` files share global names: if unrelated code defines the same constants/functions as this script, stop and report the conflicting names before pasting. Do not keep two copies of this trigger in the project.
+3. Save the project. Select **setupTrigger** in the function dropdown and click **Run**. Complete Google's sign-in/authorization yourself. Only one account should install it; re-running setup removes that installer's duplicate registration triggers while preserving unrelated handlers.
+4. Open **Triggers** (the clock icon). Verify exactly one trigger owned by your account with function `onRegistrationSubmit`, event source **From spreadsheet**, and event type **On form submit**. Apps Script **Executions** should show that `setupTrigger` completed successfully.
+5. Submit a **new** test registration through the actual linked Google Form. Do not type a row into the spreadsheet or manually run `onRegistrationSubmit`; neither supplies the real submission event.
+6. Check the new row on `Responses`: `event_id=tech-event-2026`, `state=PENDING`, and a populated `updated_at`. Confirm a successful `onRegistrationSubmit` run under **Executions**, then report the result to your assistant and stop. Keep email disabled and leave the worker stopped for this checkpoint. The existing response should remain unchanged.
 
 The trigger sets `PENDING` last, never assigns tokens, and never resets a row already being processed. Old responses are left alone. If you explicitly want to queue old unprocessed responses:
 
@@ -281,6 +285,6 @@ All **46 tests passed** when this project was resumed on 18 October 2026, includ
 
 The resumed local preview is at `generated/RESUMED-LOCAL-PREVIEW/card.png`. It uses a fake QR and preserves the earlier previews. The original `.coat` archive's SHA-256 remained `c9e727bb7280f9effa5712ebe7d6e2e95e5741e74b1f6b71778edfb24fec8bc2` before and after rendering. FreshCoat's checkout has no local Git changes. The project's existing Python environment also reports `No broken requirements found`.
 
-Still unverified: live Sheet sharing/read/write permissions, exact response headers until configured, real installed trigger authorization/execution, SMTP account acceptance and inbox delivery, webcam permission/device behavior, and live Google quota/latency under event load. The fresh Python 3.12 dependency installation also awaits network access in your terminal. Follow the checkpoints in order.
+You have confirmed live Sheet sharing/read/write access and configured headers through successful `init-sheet` and `check-sheet` runs. Still unverified: real installed trigger authorization/execution, SMTP account acceptance and inbox delivery, webcam permission/device behavior, and live Google quota/latency under event load. The fresh Python 3.12 dependency installation also awaits installation in your terminal. Follow the checkpoints in order.
 
 Implementation references: [FreshCoat CLI source](freshcoat/packages/cli/README.md), [gspread worksheet API](https://docs.gspread.org/en/latest/api/models/worksheet.html), [Python SMTP behavior](https://docs.python.org/3/library/smtplib.html), and [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/).
