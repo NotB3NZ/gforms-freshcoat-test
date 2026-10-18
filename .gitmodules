@@ -1,0 +1,3 @@
+[submodule "freshcoat"]
+	path = freshcoat
+	url = https://github.com/dotside-studios/freshcoat.git
