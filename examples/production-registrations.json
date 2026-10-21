@@ -1,0 +1,41 @@
+{
+  "synthetic": true,
+  "fixture_id": "local-synthetic-demo-v1",
+  "sources": {
+    "regular": [
+      {
+        "name": "Synthetic Waiting Example",
+        "email": "waiting@example.test",
+        "tier": "Lite",
+        "_price_category": "regular",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "name": "Synthetic Regular Example",
+        "email": "regular@example.test",
+        "tier": "Regular",
+        "_price_category": "regular",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      }
+    ],
+    "discount_15": [
+      {
+        "name": "Synthetic Pro Example",
+        "email": "pro@example.test",
+        "tier": "Pro",
+        "_price_category": "15_percent_discount",
+        "confirmation": true,
+        "reference_matched": true,
+        "price_matched": true,
+        "payment_received": true
+      }
+    ],
+    "discount_10": []
+  }
+}

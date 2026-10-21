@@ -1,57 +1,134 @@
 # Event registration and QR check-in
 
-This project connects your Google Form response Sheet to a Python registration worker, your existing FreshCoat card, email delivery, and a staff-only webcam check-in server.
+This project connects Google Form response Sheets to personalized FreshCoat cards, opaque QR tickets, email delivery, and a staff check-in server. The original single-source **test** workflow is preserved. The new **production** service handles three sources with four mandatory staff approvals and finite, exact-selection batches.
 
-The original test system has been exercised by the user through Form submission, Sheet updates, ticket rendering, and personal-Gmail delivery. **Current phase: separate test and production before implementing the paid-production workflow.** Production has three response sources and requires all four staff approvals. Source access and header rows were checked read-only during planning; this separation phase makes no Google requests, edits no Sheets, and sends no emails. Production live operations remain deliberately locked until the new workflow is implemented and tested.
+**Current boundary:** local implementation and offline verification are complete. Live production initialization, metadata writes, ticket issuance, recovery actions and email remain locked pending human review. No switch or CLI flag bypasses that checkpoint. `.env.production` stays email-disabled. Do not replace the lock with the old single-source worker.
 
 ## Separate test and production profiles
 
-Choose a profile before the command:
+Run commands from this project directory using the working environment:
 
 ```sh
 .venv/bin/python -m event_checkin --profile test profile-info
 .venv/bin/python -m event_checkin --profile production profile-info
 ```
 
-`test` is the default. `EVENT_CHECKIN_PROFILE` can select a default profile; the command-line flag wins. Settings come only from the selected file: generic shell variables and dotenv interpolation cannot import Sheet/SMTP settings from another profile.
+`test` is the default; `EVENT_CHECKIN_PROFILE` sets a default and the CLI flag wins. Settings come exclusively from `.env.test` or `.env.production`. The preserved `.env` is a legacy test fallback only when `.env.test` is absent. Generic shell settings and dotenv interpolation cannot copy Sheet or SMTP credentials across profiles.
 
-| Setting | Test | Production preparation |
+| Setting | Test | Production |
 | --- | --- | --- |
-| Private settings | `.env.test` | `.env.production` |
-| Working ticket history | existing `runtime/` | separate `runtime-production/` |
-| Generated images | existing `generated/` | separate `generated-production/` |
-| Template | original `templates/card.coat` | temporary `templates/event-badgev2.coat` |
-| Sources | existing test Sheet | three sources in private `config/sources.production.json` |
-| Email | disabled in the newly created profile; enable deliberately for a test | disabled and live commands locked |
+| Settings | `.env.test` | `.env.production` |
+| History / journals | existing `runtime/` | `runtime-production/` |
+| Cards | existing `generated/` | `generated-production/` |
+| Template | `templates/card.coat` | `templates/event-badgev2.coat` |
+| Sources | original single Sheet | private `config/sources.production.json` |
+| Execution | original worker | finite saved batches; live execution locked |
 
-**Edit `.env.test` for future test changes.** The original `.env` was preserved unchanged, but it is only a legacy fallback when `.env.test` does not exist. Changing `.env` while `.env.test` exists has no effect. Existing test runtime files and generated cards have not moved or been reset. Production settings have no copied Gmail password or staff key. The existing Google service-account key is intentionally shared for Sheet authentication, rather than duplicated.
+Production offline fixtures use **additional** `offline/` subdirectories under its runtime and card directories. Each synthetic demonstration has its own session directory for journals/cards, retained in its plan and checkpoint. Fixture journals never mix with future live records or other demonstrations. Original environments, secrets, test history, source archives and populated settings were preserved. Private settings, manifests, journals, plans and cards remain ignored. Fresh clones use the tracked `.env.*.example` files and `config/sources.production.example.json`; fill private values locally.
 
-Fresh clones use `.env.test.example` and `.env.production.example`. Copy examples to their corresponding ignored files and enter private values locally. A source-manifest example is at `config/sources.production.example.json`; the actual three-source mapping is ignored and private. Never commit populated settings, source links, credentials, cards or runtime records. The proposed production event ID is `aws-scd-mindanao-2026`; finalize it before issuing any production tickets and keep it permanent after that.
+The loader rejects shared event IDs, overlapping profile storage, a test profile targeting a configured production Sheet, and enabled production email. The prepared event ID is `aws-scd-mindanao-2026`; confirm it at the next checkpoint and keep it permanent after ticket issuance. Organization SMTP credentials are deferred and cannot inherit personal test credentials.
 
-The loader rejects overlapping test/production storage, shared event IDs, a test profile aimed at one of the configured production Sheets, and production email being enabled in this setup phase. The local-only production commands currently allowed are:
+## Try the production workflow entirely offline
+
+These commands use only synthetic registrations. They never connect to Google or SMTP. The batch renders the real v2 template, so Bun and the existing FreshCoat dependencies are needed.
 
 ```sh
+.venv/bin/python -m unittest discover -v
 .venv/bin/python -m event_checkin --profile production check-config
+.venv/bin/python -m event_checkin --profile production production-schema
 .venv/bin/python -m event_checkin --profile production check-template
-.venv/bin/python -m event_checkin --profile production preview --tier Regular
+.venv/bin/python -m event_checkin --profile production preview --tier Pro
+
+# Inspect recipients and save a finite selection. Choose a new plan filename each time.
+.venv/bin/python -m event_checkin --profile production batch-preview \
+  --fixture examples/production-registrations.json --all --limit 2 \
+  --plan-out runtime-production/offline/demo-plan.json
+
+# Deliberate local execution; renders two synthetic cards, records one waiting row, exits.
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --fixture examples/production-registrations.json \
+  --plan runtime-production/offline/demo-plan.json \
+  --state-out runtime-production/offline/demo-state.json
 ```
 
-The preview uses a clearly fake QR and writes `generated-production/LOCAL-PREVIEW/card.png`. It does not issue a ticket or contact Google/email. `--tier` accepts Lite, Regular or Pro. The lower-case `ticketTier` field is bound in the v2 template; a separate unused `TicketTier` declaration is left untouched. Both input template archives are preserved byte-for-byte.
+The preview shows each selected name/email, raw tier, price category, each approval, sent status, blocking reasons, and `in_batch`. It never prints tokens. Preview output is private when using real data. Only `in_batch=true` entries can be rendered/sent by the saved plan. `--limit` caps eligible delivery attempts; waiting registrations do not consume it. Waiting rows in that finite selected snapshot may receive app-owned record IDs and `WAITING_APPROVAL`, without a participant ID, QR token, or ACTIVE ticket. This metadata work can exceed the delivery limit, but never expands beyond the saved snapshot. Eligible rows beyond the limit are untouched.
 
-`worker`, `init-sheet`, `check-sheet`, queue/retry/resend/cancel, server/scanner and real-email commands are blocked under the production profile before adapters run. This is a preparation boundary, not an implementation of payment approval. Do not remove the block merely to run production; implement and test the approval-aware multi-source service first.
+The synthetic batch saves a private checkpoint after every metadata change. **For every later preview or run, use the saved state as `--fixture`, not the original sample.** Re-running the same plan with that state cannot resend completed entries. The CLI refuses to overwrite existing plans or replace a checkpoint with the original fixture. A different `--state-out` starts a separate local demonstration; use a new plan too. Files are mode 0600 in private, ignored runtime directories.
 
-### Prepared production sources and remaining work
+```sh
+# Safely resume the same finite local batch if it stopped:
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --fixture runtime-production/offline/demo-state.json \
+  --plan runtime-production/offline/demo-plan.json \
+  --state-out runtime-production/offline/demo-state.json
 
-The local source manifest contains Regular / Participants (tier H), 15% / Form Responses 1 (tier M), and 10% / Form Responses 1 (tier M). Email is C and name is D in all sources. It records these exact approval headers, all mandatory:
+# Inspect one source in the saved local state:
+.venv/bin/python -m event_checkin --profile production batch-preview \
+  --fixture runtime-production/offline/demo-state.json --source discount_15
+```
 
-- `Confirmation`
-- `Reference Number Matched?`
-- `Payment price match the price? (Discount/Regular)`
-- `Confirm if payment is received in our accont`
+Use a fresh plan after later approvals or newly submitted registrations. An entry that was waiting when selected cannot become an additional delivery inside that saved plan. A corrected recipient/name/tier invalidates an old selection. Interrupted rendering and known SMTP rejection support an explicit retry selection; uncertain email requires staff review first.
 
-Future work: read and process the three sources with shared duplicate handling; enforce four approvals before issuance and recheck immediately before email (including explicit retries/resends); append only the reviewed tracking columns; add a bounded on-demand batch that exits, and exact-participant targeting with a no-send preview. Then add HTML mail with an inline card and the organization sender credentials. The final card/email designs can be substituted later. No production metadata columns or Apps Script triggers were changed in this phase.
+## Exact selection, retries, and resends
 
-The older setup sections below describe the original single-source **test** workflow, not the upcoming paid-production workflow. Their settings should be entered in `.env.test` now.
+`batch-preview` requires exactly one selection scope:
+
+| Scope | Flags |
+| --- | --- |
+| One entry | `--id regular:R-REPLACE` |
+| Explicit list | `--id regular:R-FIRST --id discount_15:R-SECOND` |
+| One source | `--source regular` (also `discount_15` or `discount_10`) |
+| Event-wide | `--all` |
+
+A `record_id` (`R-…`) identifies a registration before any ticket exists. A `participant_id` (`P-…`) identifies an issued ticket and is also accepted when unique; it can be source-qualified. IDs survive sorting while stopped. A new row without metadata appears as `regular:row:2`, for example. This is a temporary locator, not a permanent identity: a plan binds its source and recipient/name/tier snapshot and rejects changed/moved records. Once a permanent record ID is saved, use that ID. Missing, ambiguous or repeated targets fail; selection never falls through to someone else.
+
+Normal `--action send` excludes already sent and failed jobs. Use `--action retry` for `READY`, `RENDER_ERROR`, `EMAIL_ERROR` or interrupted processing, and save a new plan. Use `--action resend` for an intentional second delivery of a sent ticket. A resend must be selected explicitly and receives a new message ID; the same resend plan cannot deliver twice. `--regenerate` redraws cards for that selection using the same participant IDs, tokens and frozen tiers. Cancelled/unknown ticket statuses remain blocked.
+
+An `EMAIL_REVIEW` result, or interrupted `PROCESSING`/`SENDING` intent, means SMTP may have accepted a message. Review provider logs using its saved `message_id`, then record one exact outcome with `batch-resolve-email SOURCE:R-ID --outcome sent|retry`. Fixture demonstrations additionally require `--fixture` and may specify `--state-out`. This command sends nothing. A retry outcome checks current approvals and frozen details, records a known retryable job, and still requires a separate `--action retry` preview/run. Live resolution remains locked. SMTP cannot guarantee exactly-once delivery; neither a preview nor a restart resolves an uncertain send.
+
+## Production approvals and duplicate policy
+
+The three sources retain their own source ID and price category. Tier is a separate field. Only exact raw tier values `Lite`, `Regular`, and `Pro` are accepted; unfamiliar labels require review instead of guessed normalization. The renderer binds `displayName` and lower-case `ticketTier`. It rejects the unused capitalized `TicketTier` declaration as unbound. Python still generates the opaque-token QR at x=400/y=450/size=400 on the 1200×900 card. Both design archives remain unchanged.
+
+Every issuance, retry and resend requires **all four** current staff approvals:
+
+| Required exact header | Regular | Both discounts |
+| --- | --- | --- |
+| `Confirmation` | A | A |
+| `Reference Number Matched?` | U | S |
+| `Payment price match the price? (Discount/Regular)` | V | T |
+| `Confirm if payment is received in our accont` | W | U |
+
+The spelling `accont` is deliberate. Exact labels and source-specific positions are validated; moved, missing or duplicate headers stop the batch. Only boolean `true` or the exact Sheets string `TRUE` qualifies. Blank, `FALSE`, numeric 1, malformed or unreadable values block. Staff review payment first and use Confirmation as their final release switch. The app never sets any staff checkbox, verifies a bank transaction, or downloads uploaded ID/payment-proof files.
+
+All three sources must be accessible even for a targeted operation, so duplicate detection fails closed. An unapproved earlier submission does not claim the email over a later approved one. Equivalent approved duplicates have one canonical registration in source/Sheet order. Conflicting approved name, tier or price details require review, including conflicts appearing during processing. An existing issued canonical identity is retained; a new submission cannot mint a replacement. Resolve conflicts by reviewing the original registrations and approvals, not by deleting tokens or forcing retries.
+
+Recipient email is trimmed/case-folded; Gmail dots and plus tags are not combined. Once issued, the participant ID, token, recipient, name, tier and source/category are frozen. Form edits do not reroute a retry: they block for review. Durable local reservations preserve identities across uncertain Sheet writes. Back up `production-batches.sqlite3` together with the Sheets; it contains private claims and per-plan recovery state.
+
+Processing takes one fixed selection and exits. It discovers accumulated rows directly, without requiring an Apps Script submission trigger. No production trigger installation is needed. The existing test trigger/worker stays separate. Production reads are paced conservatively across sources; API failures stop the run rather than silently skipping a source. Processes must share the same local runtime directory. Stop processing before sorting/deleting/editing rows: Sheets offers no conditional update or transaction spanning staff edits and SMTP, so a final approval read cannot eliminate an edit occurring after that read.
+
+## Read-only production checks and the next human checkpoint
+
+`production-schema` is local-only. The following separate command **contacts Google but requests only spreadsheet/tab metadata and row-one headers**, with a read-only Sheets scope:
+
+```sh
+.venv/bin/python -m event_checkin --profile production production-headers
+```
+
+It reports the missing app-owned columns for every source, without retrieving participant rows or writing cells. This phase did not run it against live sources. The saved header counts from the handoff are not a substitute for revalidation before initialization.
+
+`batch-preview --live` is an **operator-requested private read of real participant data**. It reads only mapped name/email/tier, four approvals, and app metadata, never file contents. It does not initialize, queue, render or send. It was implemented and tested with fakes, and was not invoked against real rows in this phase. An example for a later authorized inspection is:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-preview \
+  --live --all --limit 10 --plan-out runtime-production/review-plan.json
+```
+
+Live `batch-run --plan runtime-production/review-plan.json` remains **locked**, as do legacy production `worker`, `init-sheet`, queue/retry/resend, check-in/scanner and email commands. There is no `--force` option. The live adapter's initialization code is prepared and tested locally, but was not invoked live. These commands will not begin working merely because a plan exists or staff have approved rows.
+
+**Next checkpoint:** confirm the permanent production event ID and explicitly review/approve the 24-column proposal in [docs/PRODUCTION_CHECKPOINT.md](docs/PRODUCTION_CHECKPOINT.md). Then, in a separate authorized step, revalidate all three live headers and append only missing reviewed app-owned columns, with email disabled. Existing form/staff columns must never be renamed, reordered or overwritten. Do not change `.env.production`, initialize live Sheets or enter organization email credentials as part of the current phase. Live issuance and organization sending need their own later authorization and controlled verification. Final card/email HTML design, deployment and camera work remain deferred.
+
+The older setup sections below describe the original single-source **test** workflow. Use `.env.test` for their settings.
 
 ## What was preserved and verified
 
@@ -60,7 +137,7 @@ The older setup sections below describe the original single-source **test** work
 - The default QR rectangle is **x=400, y=450, size=400**, matching the reserved black square below the name. The QR includes a white quiet zone of at least four modules. Rendering refuses coordinates that intersect a text layer or fall outside the card.
 - FreshCoat renders a temporary copy with the name text set to shrink within its existing box. Layer positions, colors, font choice, and the source archive are preserved. Embedded fonts are reused. If you later introduce external relative assets, bundle them into the `.coat` archive before rendering.
 - Local tests render the real template with different names, confirm name pixels change, preserve the event band, test a long name, and decode the generated QR with OpenCV.
-- `.gitignore` covers credentials, `.env` variants, environments, cards, scanner pending requests, and the server journal. Examples remain trackable. Coverage is tested in a temporary Git repository independently of local Git state. `.env.example` contains blank Sheet settings; enter live settings only in your ignored `.env`.
+- `.gitignore` covers credentials, `.env.test` variants, environments, cards, scanner pending requests, and the server journal. Examples remain trackable. Coverage is tested in a temporary Git repository independently of local Git state. `.env.example` contains blank Sheet settings; enter live settings only in your ignored `.env.test`.
 
 ## Clone this project
 
@@ -71,7 +148,7 @@ git clone --recurse-submodules https://github.com/NotB3NZ/gforms-freshcoat-test.
 cd gforms-freshcoat-test
 ```
 
-If you already cloned without `--recurse-submodules`, run `git submodule update --init --recursive` from the project root. Install FreshCoat and Python dependencies using the commands below, adjusting the project path to your clone. Credentials, `.env`, generated cards, runtime journals, and Python environments are intentionally excluded from Git; configure them locally.
+If you already cloned without `--recurse-submodules`, run `git submodule update --init --recursive` from the project root. Install FreshCoat and Python dependencies using the commands below, adjusting the project path to your clone. Credentials, `.env.test`, generated cards, runtime journals, and Python environments are intentionally excluded from Git; configure them locally.
 
 ## Working directory and Python
 
@@ -81,7 +158,7 @@ Run every Python command below from:
 cd /Users/benzdecastro/Documents/Projects/test_gforms/event-checkin
 ```
 
-Your existing `.venv/bin/python` has the dependencies and runs the local tests. It is Python 3.9 with LibreSSL and emits compatibility warnings from Google authentication and urllib3. For account and event use, prefer the installed Python 3.12 with OpenSSL. A separate `.venv312` was created, but dependency installation could not finish. On resuming, pip again reported no available distribution for the pinned FastAPI version in this session; installation in Python 3.12 remains unverified. The original environment was not modified.
+Your existing `.venv/bin/python` has the dependencies and runs the local tests. It is Python 3.9 with LibreSSL and emits compatibility warnings from Google authentication and urllib3. For account and event use, prefer the installed Python 3.12 with OpenSSL. A separate `.venv312` exists but still lacks application dependencies (including FastAPI). Its migration remains incomplete; the production implementation used the working environment. The original environment was not modified.
 
 When ready to prepare the newer environment, run in your own terminal:
 
@@ -162,7 +239,7 @@ The client opens the configured spreadsheet ID and exact tab directly. It does n
 
 ## Later checkpoint — install the Apps Script trigger
 
-The complete local script is `apps-script/form-submit.gs`. It is prepared for `eventId='tech-event-2026'` and `sheetTab='Responses'`, matching `.env`; no metadata header overrides are currently configured. **Editing the local `.gs` file does not install or update anything in Google.**
+The complete local script is `apps-script/form-submit.gs`. It is prepared for `eventId='tech-event-2026'` and `sheetTab='Responses'`, matching the original test configuration; no metadata header overrides are currently configured. **Editing the local `.gs` file does not install or update anything in Google.**
 
 1. Open your registration spreadsheet and choose **Extensions → Apps Script**.
 2. Inspect the existing files first. If this event registration trigger is already present, replace only its dedicated file. Otherwise, use **+ → Script** to create `RegistrationTrigger.gs` and paste the entire local script there. Do not replace or delete unrelated code. All `.gs` files share global names: if unrelated code defines the same constants/functions as this script, stop and report the conflicting names before pasting. Do not keep two copies of this trigger in the project.
@@ -262,7 +339,7 @@ Default tracking labels are listed below. `HEADERS_FILE` can map them to the lab
 
 ## Later checkpoint — authorize one real email test
 
-Do not run a real send until you identify the test recipient and explicitly authorize the test with your assistant. Stop the polling worker first. Enter SMTP settings privately in `.env`: host, port, username, password or provider app password, sender, and `SMTP_SECURITY=starttls` (usually port 587) or `ssl` (usually 465). Plain SMTP is not supported. The service account is not an SMTP password and does not automatically authorize email.
+Do not run a real send until you identify the test recipient and explicitly authorize the test with your assistant. Stop the polling worker first. Enter SMTP settings privately in `.env.test`: host, port, username, password or provider app password, sender, and `SMTP_SECURITY=starttls` (usually port 587) or `ssl` (usually 465). Plain SMTP is not supported. The service account is not an SMTP password and does not automatically authorize email.
 
 After authorization, set `EMAIL_ENABLED=true` temporarily and send the **fake preview only** to that one approved recipient:
 
@@ -275,15 +352,15 @@ Replace the example address with the approved recipient. This command never proc
 
 ## Later checkpoint — staff server and webcam
 
-Create a separate staff credential locally, after `.env` exists. This writes the key directly into the ignored file without printing it:
+Create a separate staff credential locally, after `.env.test` exists. This writes the key directly into the ignored file without printing it:
 
 ```sh
 cd /Users/benzdecastro/Documents/Projects/test_gforms/event-checkin
 .venv/bin/python - <<'PY'
 import os, secrets
 from dotenv import set_key
-set_key('.env', 'STAFF_API_KEY', secrets.token_urlsafe(32))
-os.chmod('.env', 0o600)
+set_key('.env.test', 'STAFF_API_KEY', secrets.token_urlsafe(32))
+os.chmod('.env.test', 0o600)
 print('Staff credential saved privately.')
 PY
 ```
@@ -301,7 +378,7 @@ cd /Users/benzdecastro/Documents/Projects/test_gforms/event-checkin
 .venv/bin/python -m event_checkin scanner
 ```
 
-Set `STAFF_STATION_NAME` in `.env` to a recognizable label, such as `Entrance A`. On first admission, `checked_in_by` records this label with the timestamp and request ID in the same Sheet update. Lost-response retries retain the original station. This is a station label supplied by an authenticated scanner, not a verified individual staff identity; scanners currently share one staff credential.
+Set `STAFF_STATION_NAME` in `.env.test` to a recognizable label, such as `Entrance A`. On first admission, `checked_in_by` records this label with the timestamp and request ID in the same Sheet update. Lost-response retries retain the original station. This is a station label supplied by an authenticated scanner, not a verified individual staff identity; scanners currently share one staff credential.
 
 Grant camera permission yourself if macOS requests it. Use `CAMERA_INDEX` for a different camera. Show one real issued QR at a time. Only the **ACCEPTED** result confirms admission. Another request for the same ticket shows **Already checked in — do not admit**; an unknown/cancelled ticket shows **Invalid or cancelled ticket — do not admit**. A network/Google/auth failure shows **Unable to confirm — do not admit; retrying**. `Q` closes the scanner; `R` retries a pending scan.
 
@@ -311,29 +388,25 @@ The server requires `X-Staff-Key` on every `/check-in` request; participant toke
 
 ## Coordination and operational limits
 
-Use **one central server process and one worker process on the same computer**, sharing the same `.env` and `RUNTIME_DIR`. The whole check-in lookup/decision/Sheet write and durable request journal are protected by a thread lock and an OS file lock. Worker Sheet changes use the same lock and update only their own metadata cells. Server and worker singleton locks reject accidental extra local instances.
+Use **one central server process and one worker process on the same computer**, sharing the same `.env.test` and `RUNTIME_DIR`. The whole check-in lookup/decision/Sheet write and durable request journal are protected by a thread lock and an OS file lock. Worker Sheet changes use the same lock and update only their own metadata cells. Server and worker singleton locks reject accidental extra local instances.
 
 This does not coordinate independent hosts, containers with different runtime directories, or arbitrary Apps Scripts editing issued tickets. Multiple independent check-in servers/workers require a shared transactional database or distributed coordination before use. Do not use network filesystems for runtime locks/SQLite. This version is deliberately local; remote cameras need an authenticated HTTPS deployment and a separate deployment review. Non-local plain HTTP scanner URLs are refused. Nothing here publishes the system.
 
 Pause both processes before sorting, deleting, or manually changing existing response rows/metadata. Appending normal Form submissions is supported. IDs are looked up afresh between jobs, so sorting while stopped does not change identity; Sheets has no conditional cell-write operation to protect against a person sorting during an API write.
 
-Back up the Sheet and private `runtime/` directory while processes are stopped. Retain both databases for the event: `checkin.sqlite3` stores request results across restarts and uses token hashes, while `issuance.sqlite3` contains reserved IDs, emails and raw ticket tokens needed for recovery. QR-bearing cards, both journals, the Sheet token column, `.env`, service credentials, and scanner pending files remain private. Do not clear check-in timestamps or request IDs to allow repeat admission.
+Back up the Sheet and private `runtime/` directory while processes are stopped. Retain both databases for the event: `checkin.sqlite3` stores request results across restarts and uses token hashes, while `issuance.sqlite3` contains reserved IDs, emails and raw ticket tokens needed for recovery. QR-bearing cards, both journals, the Sheet token column, `.env.test`, service credentials, and scanner pending files remain private. Do not clear check-in timestamps or request IDs to allow repeat admission.
 
 ## Code map and verification limits
 
 | File | Purpose |
 | --- | --- |
-| `event_checkin/config.py`, `sheets.py`, `locking.py` | Shared settings, header mapping, Google access, local coordination. |
-| `issuance.py`, `cards.py`, `mailer.py`, `worker.py` | Durable ticket reservations, actual FreshCoat rendering, QR composition, SMTP and recovery. |
-| `checkin.py`, `server.py` | Durable request journal and staff-protected FastAPI endpoint. |
-| `scanner.py` | OpenCV camera UI, visibility suppression and persistent request retries. |
-| `apps-script/form-submit.gs` | Installable spreadsheet form-submit trigger source. |
-| `tests/` | Fake Sheet/SMTP tests, HTTP endpoint tests and actual card/QR tests. |
+| `config.py`, `sheets.py`, `locking.py` | Isolated settings and original test adapter/coordination. |
+| `production_sheets.py` | Three-source schema validation, read-only live access, protected metadata initialization/updates, synthetic fixtures. |
+| `production.py`, `production_cli.py` | Approval/duplicate policy, private selection plans, finite execution, frozen claims and delivery recovery. |
+| `issuance.py`, `cards.py`, `mailer.py`, `worker.py` | Original test workflow, FreshCoat rendering, QR composition and SMTP. |
+| `checkin.py`, `server.py`, `scanner.py` | Existing test check-in API and webcam client. |
+| `apps-script/form-submit.gs` | Existing test-only submission queue trigger. |
 
-All **46 tests passed** when this project was resumed on 18 October 2026, including the original 39 tests. Additional regression tests cover cancelled/unknown statuses, cancellation without identity or attendance loss, duplicate registration after cancellation, station recording across failed writes/restarts, and API station validation. The suite also covers first admission, duplicate/invalid tickets, simultaneous scans/retries, recovery, identity reservations, rendering/email failures, ambiguous sends, header mappings, metadata-only RAW writes, staff authentication, unavailable attendance, malformed server responses, QR suppression, pending scan recovery, and ignore coverage. It uses fake Google and email services; no accounts or hardware are required. Offline tests execute the actual Apps Script source against fake Google objects to check queuing order, identity protection, event mismatch handling, lock release, repeat trigger installation, and agreement with Python's metadata columns; Google authorization and installed trigger execution remain unverified.
+All **112 tests passed** in the working environment. Run `.venv/bin/python -m unittest discover -v`. The full suite covers the existing test workflow and production approval combinations, malformed values, header positions/access, later approvals, exact selections, bounded batches, changed recipient/tier/approvals before SMTP, duplicate conflicts, token/tier preservation, explicit resends, uncertain sends and lost-write recovery. Tests use fake Google/SMTP; actual FreshCoat rendering and QR decoding run locally. No account or hardware access is needed. The working Python 3.9 environment emits the known Google-auth/LibreSSL warnings. Python 3.12 still lacks application dependencies; its migration was not attempted in this phase.
 
-The resumed local preview is at `generated/RESUMED-LOCAL-PREVIEW/card.png`. It uses a fake QR and preserves the earlier previews. The original `.coat` archive's SHA-256 remained `c9e727bb7280f9effa5712ebe7d6e2e95e5741e74b1f6b71778edfb24fec8bc2` before and after rendering. FreshCoat's checkout has no local Git changes. The project's existing Python environment also reports `No broken requirements found`.
-
-You have confirmed live Sheet sharing/read/write access and configured headers through successful `init-sheet` and `check-sheet` runs. Still unverified: real installed trigger authorization/execution, SMTP account acceptance and inbox delivery, webcam permission/device behavior, and live Google quota/latency under event load. The fresh Python 3.12 dependency installation also awaits installation in your terminal. Follow the checkpoints in order.
-
-Implementation references: [FreshCoat CLI source](freshcoat/packages/cli/README.md), [gspread worksheet API](https://docs.gspread.org/en/latest/api/models/worksheet.html), [Python SMTP behavior](https://docs.python.org/3/library/smtplib.html), and [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/).
+The original test workflow was exercised live by the user before this phase. Still unverified here: current live production headers and participant tier labels, live initialization/issuance, API quota/latency under event load, organization SMTP acceptance/inbox delivery, and camera hardware. No production participant rows were fetched, no live cells or approvals were changed, and no real email was sent during this implementation. Preserve the remaining checkpoints.

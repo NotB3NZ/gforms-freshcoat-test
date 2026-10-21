@@ -11,6 +11,7 @@ class Row:
     # Locator for the current snapshot only. Never used as a participant identity.
     number: int
     data: dict
+    source_id: str = ""
 
     def get(self, key):
         return self.data.get(key, "")

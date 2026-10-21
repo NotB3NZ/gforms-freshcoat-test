@@ -8,6 +8,15 @@ from event_checkin.config import Settings, ROOT
 
 
 class TemplateTests(unittest.TestCase):
+    def test_declared_unused_capitalized_tier_is_rejected(self):
+        template = ROOT / "templates/event-badgev2.coat"
+        if not template.is_file():
+            self.skipTest("Optional v2 template is not installed")
+        with tempfile.TemporaryDirectory() as temp:
+            settings = Settings(template=template, generated=Path(temp), tier_field="TicketTier")
+            with self.assertRaisesRegex(RenderError, "no text binds"):
+                CardRenderer(settings).render("LOCAL-UNBOUND", "Synthetic Example", "x" * 43, ticket_tier="Pro")
+
     def test_v2_template_personalizes_name_and_tier_and_preserves_archive(self):
         template = ROOT / "templates/event-badgev2.coat"
         if not template.is_file():

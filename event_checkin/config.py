@@ -71,7 +71,7 @@ class Settings:
 
     def require_operational(self):
         if self.profile == "production":
-            raise ConfigurationError("Production operations are locked during setup. Multi-source processing and all four payment approvals must be implemented and tested first.")
+            raise ConfigurationError("Production live operations are locked pending the human schema/event-ID checkpoint and separate email authorization. Use local fixture batches for verification.")
 
     def require_sheet(self):
         self.require_operational()
@@ -204,15 +204,17 @@ def read_source_manifest(path):
             table = (source["spreadsheet_id"], source["tab_id"])
             if not isinstance(key, str) or not key or key in ids or table in tables:
                 raise ValueError()
-            if not all(source.get(name) for name in ("spreadsheet_id", "tab_name", "price_category")):
+            if not all(isinstance(source.get(name), str) and source[name].strip() for name in ("spreadsheet_id", "tab_name", "price_category")):
                 raise ValueError()
-            if not isinstance(source["tab_id"], int):
+            if type(source["tab_id"]) is not int:
                 raise ValueError()
-            if set(source["approvals"]) != required_approvals or any(not v for v in source["approvals"].values()):
+            if set(source["approvals"]) != required_approvals or any(not isinstance(v, str) or not v for v in source["approvals"].values()):
+                raise ValueError()
+            if len(set(source["approvals"].values())) != 4 or set(source["fields"]) != {"email", "name", "tier"}:
                 raise ValueError()
             for field_name in ("email", "name", "tier"):
                 selector = source["fields"][field_name]
-                if not selector.get("header") or not selector.get("column"):
+                if not all(isinstance(selector.get(k), str) and selector[k] for k in ("header", "column")):
                     raise ValueError()
             ids.add(key)
             tables.add(table)

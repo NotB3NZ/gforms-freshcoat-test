@@ -15,6 +15,8 @@ def main():
     parser.add_argument("--profile", choices=("test", "production"), default=None,
                         help="Isolated configuration; defaults to test (or EVENT_CHECKIN_PROFILE)")
     commands = parser.add_subparsers(dest="command", required=True)
+    from . import production_cli
+    production_cli.register(commands)
     commands.add_parser("profile-info", help="Show non-secret profile paths and readiness; no account access")
     commands.add_parser("check-template", help="Inspect bindings and QR placement without account access")
     preview = commands.add_parser("preview", help="Render the actual template with a clearly fake QR; sends no email")
@@ -41,8 +43,10 @@ def main():
     args = parser.parse_args()
     try:
         s = load_settings(profile=args.profile)
-        if s.profile == "production" and args.command not in ("profile-info", "check-config", "check-template", "preview"):
+        if s.profile == "production" and args.command not in ("profile-info", "check-config", "check-template", "preview") + production_cli.COMMANDS:
             s.require_operational()
+        if args.command in production_cli.COMMANDS:
+            return production_cli.run(s, args)
         if args.command == "profile-info":
             print("Profile: " + s.profile)
             print("Configuration: " + str(s.env_file))
@@ -51,7 +55,7 @@ def main():
             print("Template: " + str(s.template))
             if s.profile == "production":
                 print("Configured sources: " + str(len(production_sources(s))))
-                print("Live production operations: LOCKED (approval and multi-source implementation pending)")
+                print("Live production operations: LOCKED (human schema/event-ID checkpoint and email authorization pending)")
             else:
                 print("Email enabled: " + str(s.email_enabled))
             return

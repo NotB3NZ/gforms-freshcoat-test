@@ -20,6 +20,19 @@ def read_template(path):
         return json.loads(archive.read("template.json"))
 
 
+def field_is_bound(template, field, frame_name):
+    def visit(elements):
+        for element in elements:
+            props = element.get("properties", {})
+            value = props.get("value", "")
+            if element.get("type") == "text" and isinstance(value, str) and re.search(r"{{\s*" + re.escape(field) + r"\s*}}", value):
+                return True
+            if visit(props.get("children", [])):
+                return True
+        return False
+    return any(visit(frame["elements"]) for frame in template["template_data"] if frame["name"] == frame_name)
+
+
 def inspect_template(settings):
     template = read_template(settings.template)
     field = settings.name_field
@@ -88,6 +101,8 @@ class CardRenderer:
             if ticket_tier is not None:
                 if s.tier_field not in template["fields"]["properties"]:
                     raise RenderError("The configured tier field is not declared in this template.")
+                if not field_is_bound(template, s.tier_field, s.frame):
+                    raise RenderError("The configured tier field is declared but no text binds it in this frame.")
                 if ticket_tier not in ("Lite", "Regular", "Pro"):
                     raise RenderError("Choose ticket tier Lite, Regular or Pro.")
                 values[s.tier_field] = ticket_tier
