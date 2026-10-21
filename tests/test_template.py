@@ -8,6 +8,30 @@ from event_checkin.config import Settings, ROOT
 
 
 class TemplateTests(unittest.TestCase):
+    def test_v2_template_personalizes_name_and_tier_and_preserves_archive(self):
+        template = ROOT / "templates/event-badgev2.coat"
+        if not template.is_file():
+            self.skipTest("Optional v2 template is not installed")
+        bun = shutil.which("bun") or str(Path.home() / ".bun/bin/bun")
+        if not Path(bun).is_file() or not (ROOT / "freshcoat/node_modules").exists():
+            self.skipTest("Bun or FreshCoat dependencies missing")
+        import cv2
+        import numpy as np
+        from PIL import Image
+        original = template.read_bytes()
+        token = "0123456789_abcdefghijklmnopqrstuvwxyz-ABCDE"
+        with tempfile.TemporaryDirectory() as temp:
+            s = Settings(template=template, bun=bun, generated=Path(temp))
+            renderer = CardRenderer(s)
+            lite = renderer.render("LOCAL-LITE", "Local Example", token, ticket_tier="Lite")
+            pro = renderer.render("LOCAL-PRO", "Local Example", token, ticket_tier="Pro")
+            image_lite, image_pro = Image.open(lite), Image.open(pro)
+            self.assertFalse(np.array_equal(np.array(image_lite.crop((35, 315, 610, 380))),
+                                           np.array(image_pro.crop((35, 315, 610, 380)))))
+            self.assertEqual(cv2.QRCodeDetector().detectAndDecode(cv2.imread(str(lite)))[0], token)
+            self.assertEqual(image_lite.size, (1200, 900))
+        self.assertEqual(template.read_bytes(), original)
+
     def test_actual_binding_and_no_text_overlap(self):
         template, dims = inspect_template(Settings())
         self.assertEqual(dims, (1200, 900))

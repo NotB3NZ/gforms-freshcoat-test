@@ -8,3 +8,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .DS_Store
+
+# Isolated profiles: examples are public; local settings and processing data are private.
+!.env.test.example
+!.env.production.example
+config/sources.production.json
+runtime-production/
+generated-production/

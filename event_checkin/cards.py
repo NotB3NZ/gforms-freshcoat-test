@@ -74,7 +74,7 @@ class CardRenderer:
     def __init__(self, settings):
         self.settings = settings
 
-    def render(self, participant_id, name, token):
+    def render(self, participant_id, name, token, ticket_tier=None):
         s = self.settings
         if not re.fullmatch(r"[A-Za-z0-9_-]+", participant_id):
             raise RenderError("Unsafe participant filename.")
@@ -85,6 +85,12 @@ class CardRenderer:
         with tempfile.TemporaryDirectory(prefix="render-", dir=output) as temp:
             temp = Path(temp)
             values = {s.name_field: name}
+            if ticket_tier is not None:
+                if s.tier_field not in template["fields"]["properties"]:
+                    raise RenderError("The configured tier field is not declared in this template.")
+                if ticket_tier not in ("Lite", "Regular", "Pro"):
+                    raise RenderError("Choose ticket tier Lite, Regular or Pro.")
+                values[s.tier_field] = ticket_tier
             if "name" in template["fields"]["properties"]:
                 # This required legacy field is separate from the actual displayName binding.
                 # Its current maxLength is 40; displayName itself has no such restriction.

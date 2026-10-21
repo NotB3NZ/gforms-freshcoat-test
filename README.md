@@ -2,7 +2,56 @@
 
 This project connects your Google Form response Sheet to a Python registration worker, your existing FreshCoat card, email delivery, and a staff-only webcam check-in server.
 
-The code is implemented and locally tested. **Current checkpoint: manually install the Apps Script trigger.** You confirmed that the service account has Editor access, `init-sheet` succeeded without queuing old responses, and `check-sheet` verified the configured headers with one registration. Email remains disabled. The installed trigger, real email delivery, and webcam access still need your participation. No real email has been sent and no server has been deployed or opened publicly.
+The original test system has been exercised by the user through Form submission, Sheet updates, ticket rendering, and personal-Gmail delivery. **Current phase: separate test and production before implementing the paid-production workflow.** Production has three response sources and requires all four staff approvals. Source access and header rows were checked read-only during planning; this separation phase makes no Google requests, edits no Sheets, and sends no emails. Production live operations remain deliberately locked until the new workflow is implemented and tested.
+
+## Separate test and production profiles
+
+Choose a profile before the command:
+
+```sh
+.venv/bin/python -m event_checkin --profile test profile-info
+.venv/bin/python -m event_checkin --profile production profile-info
+```
+
+`test` is the default. `EVENT_CHECKIN_PROFILE` can select a default profile; the command-line flag wins. Settings come only from the selected file: generic shell variables and dotenv interpolation cannot import Sheet/SMTP settings from another profile.
+
+| Setting | Test | Production preparation |
+| --- | --- | --- |
+| Private settings | `.env.test` | `.env.production` |
+| Working ticket history | existing `runtime/` | separate `runtime-production/` |
+| Generated images | existing `generated/` | separate `generated-production/` |
+| Template | original `templates/card.coat` | temporary `templates/event-badgev2.coat` |
+| Sources | existing test Sheet | three sources in private `config/sources.production.json` |
+| Email | disabled in the newly created profile; enable deliberately for a test | disabled and live commands locked |
+
+**Edit `.env.test` for future test changes.** The original `.env` was preserved unchanged, but it is only a legacy fallback when `.env.test` does not exist. Changing `.env` while `.env.test` exists has no effect. Existing test runtime files and generated cards have not moved or been reset. Production settings have no copied Gmail password or staff key. The existing Google service-account key is intentionally shared for Sheet authentication, rather than duplicated.
+
+Fresh clones use `.env.test.example` and `.env.production.example`. Copy examples to their corresponding ignored files and enter private values locally. A source-manifest example is at `config/sources.production.example.json`; the actual three-source mapping is ignored and private. Never commit populated settings, source links, credentials, cards or runtime records. The proposed production event ID is `aws-scd-mindanao-2026`; finalize it before issuing any production tickets and keep it permanent after that.
+
+The loader rejects overlapping test/production storage, shared event IDs, a test profile aimed at one of the configured production Sheets, and production email being enabled in this setup phase. The local-only production commands currently allowed are:
+
+```sh
+.venv/bin/python -m event_checkin --profile production check-config
+.venv/bin/python -m event_checkin --profile production check-template
+.venv/bin/python -m event_checkin --profile production preview --tier Regular
+```
+
+The preview uses a clearly fake QR and writes `generated-production/LOCAL-PREVIEW/card.png`. It does not issue a ticket or contact Google/email. `--tier` accepts Lite, Regular or Pro. The lower-case `ticketTier` field is bound in the v2 template; a separate unused `TicketTier` declaration is left untouched. Both input template archives are preserved byte-for-byte.
+
+`worker`, `init-sheet`, `check-sheet`, queue/retry/resend/cancel, server/scanner and real-email commands are blocked under the production profile before adapters run. This is a preparation boundary, not an implementation of payment approval. Do not remove the block merely to run production; implement and test the approval-aware multi-source service first.
+
+### Prepared production sources and remaining work
+
+The local source manifest contains Regular / Participants (tier H), 15% / Form Responses 1 (tier M), and 10% / Form Responses 1 (tier M). Email is C and name is D in all sources. It records these exact approval headers, all mandatory:
+
+- `Confirmation`
+- `Reference Number Matched?`
+- `Payment price match the price? (Discount/Regular)`
+- `Confirm if payment is received in our accont`
+
+Future work: read and process the three sources with shared duplicate handling; enforce four approvals before issuance and recheck immediately before email (including explicit retries/resends); append only the reviewed tracking columns; add a bounded on-demand batch that exits, and exact-participant targeting with a no-send preview. Then add HTML mail with an inline card and the organization sender credentials. The final card/email designs can be substituted later. No production metadata columns or Apps Script triggers were changed in this phase.
+
+The older setup sections below describe the original single-source **test** workflow, not the upcoming paid-production workflow. Their settings should be entered in `.env.test` now.
 
 ## What was preserved and verified
 
@@ -77,9 +126,9 @@ Do this first. Do not install the trigger or enter email credentials yet.
 
    ```sh
    cd /Users/benzdecastro/Documents/Projects/test_gforms/event-checkin
-   test -f .env || cp .env.example .env
-   chmod 600 .env
-   open -e .env
+   test -f .env.test || cp .env.test.example .env.test
+   chmod 600 .env.test
+   open -e .env.test
    ```
 
 2. Fill `SPREADSHEET_ID` with the part between `/d/` and `/edit` in your Sheet URL. Fill `SHEET_TAB` with the exact response tab title at the bottom of the Sheet. Choose a permanent `EVENT_ID`, such as `aws-student-day-2026`. Keep this ID the same for the whole event.

@@ -3,7 +3,7 @@ import sys
 import time
 
 from .cards import CardRenderer, inspect_template
-from .config import load_settings
+from .config import load_settings, production_sources
 from .locking import file_lock
 from .mailer import SMTPMailer
 from .sheets import GoogleSheet
@@ -12,9 +12,14 @@ from .worker import Worker
 
 def main():
     parser = argparse.ArgumentParser(description="Event registration tools. Run from the event-checkin directory.")
+    parser.add_argument("--profile", choices=("test", "production"), default=None,
+                        help="Isolated configuration; defaults to test (or EVENT_CHECKIN_PROFILE)")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("profile-info", help="Show non-secret profile paths and readiness; no account access")
     commands.add_parser("check-template", help="Inspect bindings and QR placement without account access")
-    commands.add_parser("preview", help="Render the actual template with a clearly fake QR; sends no email")
+    preview = commands.add_parser("preview", help="Render the actual template with a clearly fake QR; sends no email")
+    preview.add_argument("--tier", choices=("Lite", "Regular", "Pro"), default=None,
+                         help="Preview-only tier value for templates declaring CARD_TIER_FIELD")
     commands.add_parser("check-config", help="Validate local Sheet settings without connecting to Google")
     commands.add_parser("check-sheet", help="Read-only connection/header check; never prints row contents")
     commands.add_parser("init-sheet", help="Add configured metadata headers; does not queue rows")
@@ -35,8 +40,26 @@ def main():
     email_test.add_argument("--authorize-send", action="store_true", required=True)
     args = parser.parse_args()
     try:
-        s = load_settings()
+        s = load_settings(profile=args.profile)
+        if s.profile == "production" and args.command not in ("profile-info", "check-config", "check-template", "preview"):
+            s.require_operational()
+        if args.command == "profile-info":
+            print("Profile: " + s.profile)
+            print("Configuration: " + str(s.env_file))
+            print("Runtime records: " + str(s.runtime))
+            print("Generated cards: " + str(s.generated))
+            print("Template: " + str(s.template))
+            if s.profile == "production":
+                print("Configured sources: " + str(len(production_sources(s))))
+                print("Live production operations: LOCKED (approval and multi-source implementation pending)")
+            else:
+                print("Email enabled: " + str(s.email_enabled))
+            return
         if args.command == "check-config":
+            if s.profile == "production":
+                sources = production_sources(s)
+                print("Production profile is isolated; " + str(len(sources)) + " sources configured locally. Google access has not been tested by this command. Live operations remain locked.")
+                return
             s.require_sheet()
             print("Local Sheet settings are present. Google account access has not been tested.")
             return
@@ -46,7 +69,12 @@ def main():
                 *dimensions, s.frame, s.name_field, s.qr_x, s.qr_y, s.qr_size))
             return
         if args.command == "preview":
-            path = CardRenderer(s).render("LOCAL-PREVIEW", "Local Test Participant", "LOCAL_PREVIEW_ONLY_" + "0" * 24 + "X")
+            template, _ = inspect_template(s)
+            tier = args.tier
+            if s.tier_field in template["fields"]["properties"] and tier is None:
+                tier = "Regular"
+            path = CardRenderer(s).render("LOCAL-PREVIEW", "Local Test Participant", "LOCAL_PREVIEW_ONLY_" + "0" * 24 + "X",
+                                          ticket_tier=tier)
             print("Local preview written to " + str(path) + ". Its fake QR is not an issued ticket.")
             return
         if args.command == "scanner":
@@ -67,10 +95,11 @@ def main():
             return
         if args.command == "server":
             import uvicorn
+            from .server import create_app
             s.require_staff()
             s.require_sheet()
             # Local only, no auto-reload, one central process. Lifespan also enforces a singleton.
-            uvicorn.run("event_checkin.server:create_app", factory=True, host="127.0.0.1", port=args.port,
+            uvicorn.run(create_app(settings=s), host="127.0.0.1", port=args.port,
                         workers=1, access_log=False, log_level="critical")
             return
         sheet = GoogleSheet(s)

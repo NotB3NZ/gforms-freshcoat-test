@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "regular",
+      "spreadsheet_id": "REPLACE_WITH_SPREADSHEET_ID",
+      "tab_name": "Participants",
+      "tab_id": 1394884243,
+      "price_category": "regular",
+      "fields": {
+        "email": {
+          "header": "Email",
+          "column": "C"
+        },
+        "name": {
+          "header": "Full Name",
+          "column": "D"
+        },
+        "tier": {
+          "header": "Select Ticket Type",
+          "column": "H"
+        }
+      },
+      "approvals": {
+        "confirmation": "Confirmation",
+        "reference_matched": "Reference Number Matched?",
+        "price_matched": "Payment price match the price? (Discount/Regular)",
+        "payment_received": "Confirm if payment is received in our accont"
+      }
+    },
+    {
+      "id": "discount_15",
+      "spreadsheet_id": "REPLACE_WITH_SPREADSHEET_ID",
+      "tab_name": "Form Responses 1",
+      "tab_id": 555418890,
+      "price_category": "15_percent_discount",
+      "fields": {
+        "email": {
+          "header": "Email",
+          "column": "C"
+        },
+        "name": {
+          "header": "Full Name",
+          "column": "D"
+        },
+        "tier": {
+          "header": "15% OFF Tickets",
+          "column": "M"
+        }
+      },
+      "approvals": {
+        "confirmation": "Confirmation",
+        "reference_matched": "Reference Number Matched?",
+        "price_matched": "Payment price match the price? (Discount/Regular)",
+        "payment_received": "Confirm if payment is received in our accont"
+      }
+    },
+    {
+      "id": "discount_10",
+      "spreadsheet_id": "REPLACE_WITH_SPREADSHEET_ID",
+      "tab_name": "Form Responses 1",
+      "tab_id": 1334353434,
+      "price_category": "10_percent_discount",
+      "fields": {
+        "email": {
+          "header": "Email",
+          "column": "C"
+        },
+        "name": {
+          "header": "Full Name",
+          "column": "D"
+        },
+        "tier": {
+          "header": "10% OFF Tickets",
+          "column": "M"
+        }
+      },
+      "approvals": {
+        "confirmation": "Confirmation",
+        "reference_matched": "Reference Number Matched?",
+        "price_matched": "Payment price match the price? (Discount/Regular)",
+        "payment_received": "Confirm if payment is received in our accont"
+      }
+    }
+  ]
+}
