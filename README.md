@@ -2,7 +2,7 @@
 
 This project connects Google Form response Sheets to personalized FreshCoat cards, opaque QR tickets, email delivery, and a staff check-in server. The original single-source **test** workflow is preserved. The new **production** service handles three sources with four mandatory staff approvals and finite, exact-selection batches.
 
-**Current boundary:** local implementation and offline verification are complete. Live production initialization, metadata writes, ticket issuance, recovery actions and email remain locked pending human review. No switch or CLI flag bypasses that checkpoint. `.env.production` stays email-disabled. Do not replace the lock with the old single-source worker.
+**Current boundary:** local implementation and offline verification are complete. Production participant metadata writes, ticket issuance, recovery actions and email remain locked. The separately approved `production-init-headers` command is limited to the reviewed row-one header ranges, which were initialized and read back successfully on 2026-10-21. No switch or CLI flag bypasses that checkpoint. `.env.production` stays email-disabled. Do not replace the lock with the old single-source worker.
 
 ## Separate test and production profiles
 
@@ -51,7 +51,7 @@ These commands use only synthetic registrations. They never connect to Google or
   --state-out runtime-production/offline/demo-state.json
 ```
 
-The preview shows each selected name/email, raw tier, price category, each approval, sent status, blocking reasons, and `in_batch`. It never prints tokens. Preview output is private when using real data. Only `in_batch=true` entries can be rendered/sent by the saved plan. `--limit` caps eligible delivery attempts; waiting registrations do not consume it. Waiting rows in that finite selected snapshot may receive app-owned record IDs and `WAITING_APPROVAL`, without a participant ID, QR token, or ACTIVE ticket. This metadata work can exceed the delivery limit, but never expands beyond the saved snapshot. Eligible rows beyond the limit are untouched.
+The preview shows each selected name/email, original raw tier, `mapped_tier`, price category, each approval, sent status, blocking reasons, and `in_batch`. It never prints tokens. Preview output is private when using real data. Only `in_batch=true` entries can be rendered/sent by the saved plan. `--limit` caps eligible delivery attempts; waiting registrations do not consume it. Waiting rows in that finite selected snapshot may receive app-owned record IDs and `WAITING_APPROVAL`, without a participant ID, QR token, or ACTIVE ticket. This metadata work can exceed the delivery limit, but never expands beyond the saved snapshot. Eligible rows beyond the limit are untouched.
 
 The synthetic batch saves a private checkpoint after every metadata change. **For every later preview or run, use the saved state as `--fixture`, not the original sample.** Re-running the same plan with that state cannot resend completed entries. The CLI refuses to overwrite existing plans or replace a checkpoint with the original fixture. A different `--state-out` starts a separate local demonstration; use a new plan too. Files are mode 0600 in private, ignored runtime directories.
 
@@ -68,6 +68,78 @@ The synthetic batch saves a private checkpoint after every metadata change. **Fo
 ```
 
 Use a fresh plan after later approvals or newly submitted registrations. An entry that was waiting when selected cannot become an additional delivery inside that saved plan. A corrected recipient/name/tier invalidates an old selection. Interrupted rendering and known SMTP rejection support an explicit retry selection; uncertain email requires staff review first.
+
+## Approved production header initialization
+
+The event ID and the 24 tracking headers have been approved. Live header checks
+confirmed regular `X1:AU1` and both discounts `V1:AS1`, after correction of the
+15% tier header. A private snapshot of every original header, mapping, tab ID and
+spreadsheet ID is in ignored `config/production-header-init.approved.json`.
+Never commit or replace this snapshot to bypass a mismatch.
+
+```sh
+# Validate the exact approved snapshot and destinations; no Google writes:
+.venv/bin/python -m event_checkin --profile production production-init-headers
+
+# Authorized header initialization only; never processes registrations:
+.venv/bin/python -m event_checkin --profile production production-init-headers --apply
+```
+
+This command requires the permanent event ID, disabled email and the participant
+processing lock. Before any write it validates all three sources against the
+original snapshot, then repeats that validation before each Sheet request. A
+formula in a destination is treated as content even if it displays a blank.
+Unexpected, partial, moved, reordered or extra headers stop the command.
+
+Each Sheet receives one atomic batch containing only a necessary increase to
+`gridProperties.columnCount` and `userEnteredValue` writes to the approved 24
+cells in row 1. Formatting, notes, data validation and all other fields are
+untouched. Reads are restricted to spreadsheet/tab properties and row 1. There
+is no participant adapter, renderer or SMTP client in this path.
+
+The command reads headers back after each write and checks all sources again at
+the end. An already complete, exact header set is left unchanged. If a request
+fails or its response is lost, stop participant operations and rerun this same
+command to reconcile; completed Sheets are skipped. The three spreadsheets do
+not share a transaction, so a failure may leave some complete and some pending.
+Do not sort or edit headers while initialization runs: Sheets has no conditional
+cell-write operation to eliminate edits in the final read/write interval.
+
+This is a narrow exception to the production lock. It does not enable legacy
+`init-sheet`, batches, queueing, ticket issuance, rendering, check-in or email.
+The next checkpoint after verified initialization is a separately authorized
+read-only inspection of real tier values/registration data and a review of the
+first controlled issuance plan. No participant operation is authorized by header
+initialization alone.
+
+## Read-only aggregate production inspection
+
+After explicit authorization to inspect participant fields, run:
+
+```sh
+.venv/bin/python -m event_checkin --profile production production-inspect
+```
+
+This separate command uses a read-only Sheets scope. It checks the initialized
+reviewed schema and reads only name, email, raw ticket tier, the four mandatory
+approvals, and `state`, `render_status`, `email_status`, `ticket_status`. It does
+not fetch tokens, IDs, uploaded documents, payment references, other form answers
+or frozen recipient data. It never uses the private per-recipient batch preview.
+
+Output contains aggregate registration/contact/approval/status counts, exact
+safe ticket-label counts, approved mapped tiers and duplicate-group counts.
+Names and normalized emails are compared only in memory and are never printed
+or saved. Unexpected free text in tier/status fields is withheld rather than
+risk exposing a misplaced name, email or token. Exceptions are sanitized.
+Inspection and production eligibility use the same exact source-specific resolver; neither infers aliases or strips price suffixes.
+
+Registration counts include rows with any name, email, tier or processing state;
+checkbox-only empty rows are excluded, so prefilled unchecked boxes do not inflate
+totals. A completely blank submission cannot be distinguished from an empty row
+without additional authorized fields. Email validation checks syntax, not inbox
+ownership/deliverability; comparisons trim and case-fold without merging Gmail
+dots or plus tags. Candidate counts exclude any duplicate email and any existing
+processing status. A live issuance test still requires separate approval.
 
 ## Exact selection, retries, and resends
 
@@ -88,7 +160,26 @@ An `EMAIL_REVIEW` result, or interrupted `PROCESSING`/`SENDING` intent, means SM
 
 ## Production approvals and duplicate policy
 
-The three sources retain their own source ID and price category. Tier is a separate field. Only exact raw tier values `Lite`, `Regular`, and `Pro` are accepted; unfamiliar labels require review instead of guessed normalization. The renderer binds `displayName` and lower-case `ticketTier`. It rejects the unused capitalized `TicketTier` declaration as unbound. Python still generates the opaque-token QR at x=400/y=450/size=400 on the 1200×900 card. Both design archives remain unchanged.
+The three sources retain their own source ID and price category. Tier is a separate field. The existing exact canonical values `Lite`, `Regular`, and `Pro` remain accepted. The user also approved exactly the source-specific aliases listed below. The renderer binds `displayName` and lower-case `ticketTier`. It rejects the unused capitalized `TicketTier` declaration as unbound. Python still generates the opaque-token QR at x=400/y=450/size=400 on the 1200×900 card. Both design archives remain unchanged.
+
+| Source | Exact original Sheet label | Canonical tier |
+| --- | --- | --- |
+| `regular` | `Lite (₱199)` | `Lite` |
+| `discount_15` | `Lite (₱170)` | `Lite` |
+| `discount_15` | `Pro (₱297)` | `Pro` |
+
+`discount_10` has no approved price-suffixed aliases. Matching is exact: different
+case, whitespace, price, source or wording is not accepted. The shared resolver
+is in `event_checkin/tiers.py`; there is no generic price-suffix stripping or
+source-category-to-tier inference. Unknown labels continue to require review.
+
+The original Sheet label stays unchanged. Eligibility, duplicate comparisons and
+future authorized ticket metadata/rendering use the canonical tier, while the
+source's price category remains a separate value. Selection fingerprints still
+bind the original raw label, so editing it invalidates an existing selection even
+if the edited label would map to the same tier. Aliases cannot bypass any staff
+approval, duplicate conflict, cancellation, recipient-change or delivery-review
+rule. Their local implementation does not enable live processing.
 
 Every issuance, retry and resend requires **all four** current staff approvals:
 
@@ -115,7 +206,7 @@ Processing takes one fixed selection and exits. It discovers accumulated rows di
 .venv/bin/python -m event_checkin --profile production production-headers
 ```
 
-It reports the missing app-owned columns for every source, without retrieving participant rows or writing cells. This phase did not run it against live sources. The saved header counts from the handoff are not a substitute for revalidation before initialization.
+It reports the missing app-owned columns for every source, without retrieving participant rows or writing cells. Header-only live checks and the separately approved initialization were completed on 2026-10-21. All 24 headers now exist in the approved positions; the scoped initializer checks the exact original snapshot before any future action.
 
 `batch-preview --live` is an **operator-requested private read of real participant data**. It reads only mapped name/email/tier, four approvals, and app metadata, never file contents. It does not initialize, queue, render or send. It was implemented and tested with fakes, and was not invoked against real rows in this phase. An example for a later authorized inspection is:
 
@@ -124,9 +215,49 @@ It reports the missing app-owned columns for every source, without retrieving pa
   --live --all --limit 10 --plan-out runtime-production/review-plan.json
 ```
 
-Live `batch-run --plan runtime-production/review-plan.json` remains **locked**, as do legacy production `worker`, `init-sheet`, queue/retry/resend, check-in/scanner and email commands. There is no `--force` option. The live adapter's initialization code is prepared and tested locally, but was not invoked live. These commands will not begin working merely because a plan exists or staff have approved rows.
+Live `batch-run --plan runtime-production/review-plan.json` remains **locked**, as do legacy production `worker`, `init-sheet`, queue/retry/resend, check-in/scanner and email commands. There is no `--force` option. The general live adapter remains locked; only the separately approved `production-init-headers` path can initialize its fixed header ranges. These commands will not begin working merely because a plan exists or staff have approved rows.
 
-**Next checkpoint:** confirm the permanent production event ID and explicitly review/approve the 24-column proposal in [docs/PRODUCTION_CHECKPOINT.md](docs/PRODUCTION_CHECKPOINT.md). Then, in a separate authorized step, revalidate all three live headers and append only missing reviewed app-owned columns, with email disabled. Existing form/staff columns must never be renamed, reordered or overwritten. Do not change `.env.production`, initialize live Sheets or enter organization email credentials as part of the current phase. Live issuance and organization sending need their own later authorization and controlled verification. Final card/email HTML design, deployment and camera work remain deferred.
+The separately scoped `production-render-test` command supports one explicitly
+selected, unissued registration and mandatory cleanup, with `EMAIL_ENABLED=false`.
+It does not unlock batches or sending. Prepare a new private selection with
+`--source SOURCE --row ROW --selection runtime-production/selection.json`.
+Preparation validates every source and all four approvals, exact tier mapping,
+duplicate policy, existing processing history and local reservations, then saves
+the original typed tracking cells and selected registration privately. Row numbers
+are locators only; any changed selection stops execution.
+
+Only after the operator has authorized that exact test, use the same command with
+`--selection runtime-production/selection.json --apply`. Each selection is usable
+for one attempt. The test identity stays `CANCELLED` and its `INVALID_TEST_` QR is
+permanently rejected by admission and normal production processing. Its reservation
+is isolated from both normal identity journals. The current template renders the
+personalized card; verification decodes the QR and compares name/tier text pixels
+against a separate reference with the expected literal text. The template is
+unchanged. The archived preview has a prominent invalid-test banner.
+
+Every write intent and original value is saved in a private
+`runtime-production/controlled-tests/RUN_ID/audit.json` before the corresponding
+write. Only 17 fixed tracking fields may change; Form answers, approvals,
+attendance and delivery history are outside the write scope. Cleanup restores
+only an exact expected snapshot, preserves formulas/value types, verifies readback
+and retires the isolated reservation. Lost responses are reconciled by reading
+back, without blindly repeating writes. Concurrent edits or partial writes leave
+the recovery audit intact and stop restoration. Sheets has no compare-and-set
+write API; immediate rereads and local locks narrow the read/write gap, but cannot
+prevent a human edit in that gap. Keep the selected row and schema stable during
+the test. `production-render-test --recover PATH_TO_AUDIT` performs cleanup only;
+it never reassigns an identity, rerenders or sends. An archived test QR remains
+invalid even if cleanup needs review. Private audit and card paths are printed;
+participant values and tokens are never printed by this command.
+
+Unexpected controlled-preview errors report only a bounded stage, trusted local
+function/line, underlying exception class, HTTP status and allowlisted Google API
+reason. Suppressed exception contexts are inspected without printing exception
+messages, response bodies or request payloads. Original-header drift in **any**
+source still blocks preparation before participant reads; diagnostic reporting
+does not change or approve the saved schema.
+
+The event ID and exact row-one append ranges have now been explicitly approved after live header validation; see [docs/PRODUCTION_CHECKPOINT.md](docs/PRODUCTION_CHECKPOINT.md). Only `production-init-headers --apply` may perform that scoped initialization. Existing form/staff columns must never be renamed, reordered or overwritten. **Next checkpoint after verified initialization:** separately authorize private participant/tier inspection and review a first bounded issuance plan. Participant writes and organization sending remain locked. Final card/email HTML design, deployment and camera work remain deferred.
 
 The older setup sections below describe the original single-source **test** workflow. Use `.env.test` for their settings.
 
@@ -407,6 +538,6 @@ Back up the Sheet and private `runtime/` directory while processes are stopped. 
 | `checkin.py`, `server.py`, `scanner.py` | Existing test check-in API and webcam client. |
 | `apps-script/form-submit.gs` | Existing test-only submission queue trigger. |
 
-All **112 tests passed** in the working environment. Run `.venv/bin/python -m unittest discover -v`. The full suite covers the existing test workflow and production approval combinations, malformed values, header positions/access, later approvals, exact selections, bounded batches, changed recipient/tier/approvals before SMTP, duplicate conflicts, token/tier preservation, explicit resends, uncertain sends and lost-write recovery. Tests use fake Google/SMTP; actual FreshCoat rendering and QR decoding run locally. No account or hardware access is needed. The working Python 3.9 environment emits the known Google-auth/LibreSSL warnings. Python 3.12 still lacks application dependencies; its migration was not attempted in this phase.
+The previous local phase passed all **112 tests**. This header-initialization checkpoint passed **89 selected offline regression tests**, including **15 new initialization tests**, without launching FreshCoat or rendering real cards. Run `.venv/bin/python -m unittest discover -v`. The full suite covers the existing test workflow and production approval combinations, malformed values, header positions/access, later approvals, exact selections, bounded batches, changed recipient/tier/approvals before SMTP, duplicate conflicts, token/tier preservation, explicit resends, uncertain sends and lost-write recovery. Tests use fake Google/SMTP; actual FreshCoat rendering and QR decoding run locally. No account or hardware access is needed. The working Python 3.9 environment emits the known Google-auth/LibreSSL warnings. Python 3.12 still lacks application dependencies; its migration was not attempted in this phase.
 
-The original test workflow was exercised live by the user before this phase. Still unverified here: current live production headers and participant tier labels, live initialization/issuance, API quota/latency under event load, organization SMTP acceptance/inbox delivery, and camera hardware. No production participant rows were fetched, no live cells or approvals were changed, and no real email was sent during this implementation. Preserve the remaining checkpoints.
+The original test workflow was exercised live by the user before this phase. The authorized aggregate-only tier inspection has been completed. Still unverified here: live issuance, API quota/latency under event load, organization SMTP acceptance/inbox delivery, and camera hardware. Participant fields were read only during the explicitly authorized aggregate inspection; no personal details were printed or saved. The local alias implementation makes no live requests, changes no staff approvals and sends no email. The explicitly approved 24 row-one tracking headers were initialized and verified in all three sources; participant operations remain locked. Preserve the remaining checkpoints.

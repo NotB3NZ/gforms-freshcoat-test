@@ -10,12 +10,23 @@ from .mailer import SMTPMailer
 from .production import BatchProcessor, preview, private_json
 from .production_sheets import FixtureSheets, ProductionSheets, PRODUCTION_METADATA, source_mapping
 
-COMMANDS = ("production-schema", "production-headers", "batch-preview", "batch-run", "batch-resolve-email")
+COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "batch-preview", "batch-run", "batch-resolve-email")
 
 
 def register(commands):
+    controlled = commands.add_parser("production-render-test", help="One explicit no-email rendering test with guarded restoration; general production stays locked")
+    controlled.add_argument("--source", choices=("regular", "discount_15", "discount_10"))
+    controlled.add_argument("--row", type=int, help="Temporary locator; preparation binds exact source/form/approval/tracking values")
+    controlled.add_argument("--selection", type=Path, help="Private prepared selection file within production runtime")
+    controlled.add_argument("--apply", action="store_true", help="Execute exactly the selected registration, verify and clean up")
+    controlled.add_argument("--recover", type=Path, help="Cleanup only from this controlled test's private audit; never rerender")
     commands.add_parser("production-schema", help="Local-only proposal for production tracking columns")
     commands.add_parser("production-headers", help="Read only production tab metadata and headers; never participant rows")
+    audit = commands.add_parser("production-inspect", help="Read only approved name/email/tier/approval/status columns; print aggregates only")
+    audit.add_argument("--plan", type=Path, help="Private reviewed source/header snapshot; uses the approved initialization plan by default")
+    initialize = commands.add_parser("production-init-headers", help="Revalidate the approved row-one plan; participant operations stay locked")
+    initialize.add_argument("--plan", type=Path, help="Private reviewed header snapshot; defaults to config/production-header-init.approved.json")
+    initialize.add_argument("--apply", action="store_true", help="Apply only the approved grid expansion and 24 row-one headers, then verify")
     inspect = commands.add_parser("batch-preview", help="Private no-send selection preview; save a finite plan for deliberate execution")
     mode = inspect.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fixture", type=Path, help="Synthetic local JSON; no Google or email")
@@ -56,6 +67,25 @@ def run(settings, args):
         raise ConfigurationError("Use --profile production for the separate production batch tools. The test worker is unchanged.")
     if not settings.event_id:
         raise ConfigurationError("Set a separate permanent production EVENT_ID locally before preparing batches.")
+    if args.command == "production-render-test":
+        from .controlled_render import run_command, ControlledTestBlocked
+        try:
+            return run_command(settings, args)
+        except ControlledTestBlocked as exc:
+            raise ConfigurationError(str(exc)) from None
+        except Exception as exc:
+            # API/render exceptions may contain personal fields or credentials.
+            # Recovery lives in runtime-production/controlled-tests/*/audit.json.
+            from .diagnostics import safe_diagnostic
+            raise ConfigurationError("Controlled rendering test stopped. Safe diagnostic: " +
+                                     json.dumps(safe_diagnostic(exc), sort_keys=True) +
+                                     ". No email was sent; production remains locked.") from None
+    if args.command == "production-init-headers":
+        from .header_init import run_command
+        return run_command(settings, args)
+    if args.command == "production-inspect":
+        from .inspection import run_command
+        return run_command(settings, args)
     if args.command == "production-schema":
         sources = production_sources(settings)
         for source in sources:

@@ -17,8 +17,8 @@ from .locking import file_lock
 from .mailer import EmailNotSent
 from .production_sheets import APPROVAL_HEADERS, validate_production_identities
 from .sheets import SheetIntegrityError, normalize_email
-
-TIERS = ("Lite", "Regular", "Pro")
+from .tiers import TIERS, resolve_tier
+from .test_identity import is_test_token
 
 
 def approved(value):
@@ -35,7 +35,7 @@ def recipient(row):
 
 
 def details(row):
-    return (text(row.get("name")).strip(), text(row.get("tier")), text(row.get("_price_category")))
+    return (text(row.get("name")).strip(), resolve_tier(row.source_id, row.get("tier")), text(row.get("_price_category")))
 
 
 def valid_details(row):
@@ -75,6 +75,8 @@ def issued_identity(row):
 
 def reasons(row, rows, event_id, action="send"):
     blocked = []
+    if is_test_token(row.get("ticket_token")):
+        blocked.append("reserved controlled-test identity; cleanup/review required")
     if row.get("event_id") not in ("", event_id):
         blocked.append("different event")
     missing = [key for key in APPROVAL_HEADERS if not approved(row.get(key))]
@@ -157,7 +159,7 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
         if included:
             count += 1
         display = {"target": target(row), "name": row.get("name"), "email": row.get("email"),
-                   "tier": row.get("tier"), "price_category": row.get("_price_category"),
+                   "tier": row.get("tier"), "mapped_tier": details(row)[1], "price_category": row.get("_price_category"),
                    "approvals": {key: approved(row.get(key)) for key in APPROVAL_HEADERS},
                    "state": row.get("state") or ("WAITING_APPROVAL" if not has_approvals(row) else "UNPROCESSED"),
                    "sent": row.get("email_status") == "SENT" or row.get("state") == "SENT",

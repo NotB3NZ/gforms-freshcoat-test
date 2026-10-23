@@ -6,6 +6,7 @@ import sqlite3
 from .config import private_directory
 from .locking import file_lock
 from .sheets import validate_identities, SheetIntegrityError
+from .test_identity import is_test_token
 
 
 class RequestConflict(ValueError):
@@ -31,6 +32,10 @@ class CheckinService:
         return closing(sqlite3.connect(self.db_path, timeout=30, isolation_level=None))
 
     def check_in(self, token, request_id, station_name="Local staff station"):
+        # A controlled rendering-test QR can never become an admission credential,
+        # even if someone later copies its cells or changes its ticket status.
+        if is_test_token(token):
+            return {"status": "invalid", "request_id": request_id}
         digest = hashlib.sha256(token.encode()).hexdigest()
         s = self.s
         # Includes the journal, fresh Sheet lookup, decision AND update. The local worker
