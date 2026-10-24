@@ -469,6 +469,10 @@ Default tracking labels are listed below. `HEADERS_FILE` can map them to the lab
 | Last Request ID | `checkin_request_id` |
 | Last Error | `last_error` |
 
+## Local HTML confirmation review
+
+The production confirmation can now be built offline with a plain-text alternative, a CID-linked badge and a downloadable PNG. The [integration and visual-review notes](docs/CONFIRMATION_EMAIL_REVIEW.md) describe synthetic Lite, Regular and Pro previews, unchanged source templates, regression results and manual settings for a later separately authorized sending phase. No Google access or SMTP credentials are needed for these local checks; production email remains disabled.
+
 ## Later checkpoint — authorize one real email test
 
 Do not run a real send until you identify the test recipient and explicitly authorize the test with your assistant. Stop the polling worker first. Enter SMTP settings privately in `.env.test`: host, port, username, password or provider app password, sender, and `SMTP_SECURITY=starttls` (usually port 587) or `ssl` (usually 465). Plain SMTP is not supported. The service account is not an SMTP password and does not automatically authorize email.

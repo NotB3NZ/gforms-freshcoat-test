@@ -15,9 +15,13 @@ class SMTPMailer:
     def __init__(self, settings):
         self.settings = settings
 
-    def send(self, recipient, name, participant_id, card_path, message_id):
+    def build_message(self, recipient, name, participant_id, card_path, message_id, *, ticket_tier=None):
+        """Compose offline; old test callers retain their plain-text message."""
         s = self.settings
-        s.require_email()
+        if s.profile == "production" or ticket_tier is not None:
+            from .confirmation_email import build_confirmation_message
+            return build_confirmation_message(recipient, name, participant_id, card_path, message_id,
+                                              ticket_tier=ticket_tier, sender=s.smtp_from or None)
         message = EmailMessage()
         message["From"] = s.smtp_from
         message["To"] = recipient
@@ -28,6 +32,17 @@ class SMTPMailer:
             "Keep the QR private: it admits one person.\nParticipant ID: " + participant_id + "\n"
         )
         message.add_attachment(card_path.read_bytes(), maintype="image", subtype="png", filename="event-card.png")
+        return message
+
+    def send(self, recipient, name, participant_id, card_path, message_id, *, ticket_tier=None):
+        s = self.settings
+        s.require_email()
+        try:
+            message = self.build_message(recipient, name, participant_id, card_path, message_id, ticket_tier=ticket_tier)
+        except EmailNotSent:
+            raise
+        except Exception:
+            raise EmailNotSent("Local message construction failed; no message submitted.") from None
         smtp = None
         try:
             context = ssl.create_default_context()

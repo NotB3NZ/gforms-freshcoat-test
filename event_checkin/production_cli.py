@@ -51,7 +51,7 @@ def register(commands):
 
 
 class NoEmail:
-    def send(self, *args):
+    def send(self, *args, **kwargs):
         raise ConfigurationError("Fixture execution cannot send email.")
 
 

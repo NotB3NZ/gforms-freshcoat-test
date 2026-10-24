@@ -87,6 +87,18 @@ class BatchTests(unittest.TestCase):
     def execute(self, sheet, plan):
         return BatchProcessor(self.s, sheet, self.renderer, self.mailer).execute(plan)
 
+    def test_email_receives_same_frozen_name_recipient_tier_and_card_as_render(self):
+        for tier in ("Lite", "Regular", "Pro"):
+            sheet = Sheet(regular=[record(tier=tier, email=tier.lower() + "@example.invalid")])
+            self.execute(sheet, self.plan(sheet))
+            row = sheet.data["sources"]["regular"][0]
+            args = self.mailer.calls[-1]
+            self.assertEqual(args[:3], (row["normalized_email"], row["ticket_name"], row["participant_id"]))
+            self.assertEqual(str(args[3]), row["card_path"])
+            self.assertEqual(args[4], row["message_id"])
+            self.assertEqual(self.mailer.tiers[-1], row["ticket_tier"])
+            self.assertEqual(self.mailer.tiers[-1], self.renderer.calls[-1][-1])
+
     def test_all_16_approval_combinations_only_all_true_issues(self):
         for index, combo in enumerate(itertools.product(("TRUE", "FALSE"), repeat=4)):
             with self.subTest(combo=combo):

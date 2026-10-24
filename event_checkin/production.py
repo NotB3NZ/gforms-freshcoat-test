@@ -397,7 +397,8 @@ class BatchProcessor:
             self.save(row, state="REGISTRATION_REVIEW", email_status="FAILED", last_error="Approval or registration changed before SMTP; no send attempted.")
             return "blocked"
         try:
-            self.mailer.send(row.get("normalized_email"), row.get("ticket_name"), pid, path, mid)
+            self.mailer.send(row.get("normalized_email"), row.get("ticket_name"), pid, path, mid,
+                             ticket_tier=row.get("ticket_tier"))
         except EmailNotSent:
             self.save(row, state="EMAIL_ERROR", email_status="FAILED", last_error="SMTP did not accept the message; explicit retry required.")
             return "email error"

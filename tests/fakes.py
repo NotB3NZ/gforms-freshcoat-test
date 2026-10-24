@@ -55,9 +55,11 @@ class FakeMailer:
     def __init__(self):
         self.calls = []
         self.failure = None
+        self.tiers = []
 
-    def send(self, *args):
+    def send(self, *args, ticket_tier=None):
         self.calls.append(args)
+        self.tiers.append(ticket_tier)
         if self.failure:
             error = self.failure
             self.failure = None
