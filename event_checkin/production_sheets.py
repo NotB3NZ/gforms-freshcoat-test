@@ -9,6 +9,7 @@ from copy import deepcopy
 
 from .config import METADATA, ConfigurationError, production_sources
 from .sheets import Row, SheetIntegrityError, validate_identities
+from .diagnostics import diagnostic_context
 
 APPROVAL_HEADERS = {
     "confirmation": "Confirmation",
@@ -193,13 +194,14 @@ class ProductionSheets:
             self.last_request = time.monotonic()
         try:
             for source in sources:
-                pace()
-                book = client.open_by_key(source["spreadsheet_id"])
-                pace()
-                ws = book.get_worksheet_by_id(source["tab_id"])
-                if ws.title != source["tab_name"]:
-                    raise SheetIntegrityError("Production tab title/ID changed; schema review required.")
-                self.tables[source["id"]] = ProductionTable(settings, source, PacedWorksheet(ws, pace))
+                with diagnostic_context("open_production_source", source["id"]):
+                    pace()
+                    book = client.open_by_key(source["spreadsheet_id"])
+                    pace()
+                    ws = book.get_worksheet_by_id(source["tab_id"])
+                    if ws.title != source["tab_name"]:
+                        raise SheetIntegrityError("Production tab title/ID changed; schema review required.")
+                    self.tables[source["id"]] = ProductionTable(settings, source, PacedWorksheet(ws, pace))
         except SheetIntegrityError:
             raise
         except Exception:
@@ -225,7 +227,8 @@ class ProductionSheets:
         rows = []
         try:
             for table in self.tables.values():
-                rows.extend(table.rows(require_metadata=self.writable))
+                with diagnostic_context("read_production_source", table.source["id"]):
+                    rows.extend(table.rows(require_metadata=self.writable))
         except SheetIntegrityError:
             raise
         except Exception:

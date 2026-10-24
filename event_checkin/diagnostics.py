@@ -1,5 +1,8 @@
 """Bounded operation/error metadata, never exception messages or API bodies."""
 from functools import wraps
+from contextlib import contextmanager
+
+SOURCES = frozenset(("regular", "discount_15", "discount_10"))
 
 
 GOOGLE_REASONS = frozenset((
@@ -13,10 +16,16 @@ GOOGLE_REASONS = frozenset((
 STAGES = frozenset(("controlled_preview", "open_production_sources_read_only",
                     "validate_headers_and_read_mapped_columns", "read_selected_original_cell_values",
                     "validate_single_registration", "validate_header_snapshot_regular",
-                    "validate_header_snapshot_discount_15", "validate_header_snapshot_discount_10"))
+                    "validate_header_snapshot_discount_15", "validate_header_snapshot_discount_10",
+                    "single_entry_execution", "single_entry_email_settings", "single_entry_read_registration",
+                    "single_entry_tracking_update", "single_entry_tracking_write", "single_entry_journal_read",
+                    "single_entry_read_header", "single_entry_read_tracking", "open_production_source",
+                    "read_production_source", "single_entry_message_build", "single_entry_smtp_connect",
+                    "single_entry_smtp_before_submit", "single_entry_smtp_submit", "single_entry_smtp_accepted",
+                    "single_entry_badge_verification"))
 
 
-def diagnostic_operation(stage):
+def diagnostic_operation(stage, source=None):
     """Keep the original exception; tag only a fixed caller-owned stage label."""
     def decorate(function):
         @wraps(function)
@@ -26,12 +35,26 @@ def diagnostic_operation(stage):
             except Exception as exc:
                 if not getattr(exc, "_safe_operation_stage", None):
                     exc._safe_operation_stage = stage
+                if source in SOURCES and not getattr(exc, "_safe_source", None):
+                    exc._safe_source = source
                 raise
         return invoke
     return decorate
 
 
-def safe_diagnostic(exc, fallback_stage="controlled_preview"):
+@contextmanager
+def diagnostic_context(stage, source=None):
+    try:
+        yield
+    except Exception as exc:
+        if not getattr(exc, "_safe_operation_stage", None):
+            exc._safe_operation_stage = stage
+        if source in SOURCES and not getattr(exc, "_safe_source", None):
+            exc._safe_source = source
+        raise
+
+
+def safe_diagnostic(exc, fallback_stage="controlled_preview", *, source=None):
     # `raise ... from None` hides display of a context, but its original exception
     # is still available. Follow that chain without formatting any exception.
     chain, seen = [], set()
@@ -44,13 +67,14 @@ def safe_diagnostic(exc, fallback_stage="controlled_preview"):
     operation = None
     frame = root.__traceback__
     trusted = {"event_checkin.controlled_render", "event_checkin.header_init", "event_checkin.production_sheets",
-               "event_checkin.production", "event_checkin.sheets", "event_checkin.config"}
+               "event_checkin.production", "event_checkin.sheets", "event_checkin.config",
+               "event_checkin.single_send", "event_checkin.mailer"}
     while frame is not None:
         module = frame.tb_frame.f_globals.get("__name__")
         if module in trusted:
             operation = module.rsplit(".", 1)[-1] + "." + frame.tb_frame.f_code.co_name + ":" + str(frame.tb_lineno)
         frame = frame.tb_next
-    stage = next((getattr(item, "_safe_operation_stage") for item in chain
+    stage = next((getattr(item, "_safe_operation_stage") for item in reversed(chain)
                   if getattr(item, "_safe_operation_stage", None) in STAGES),
                  fallback_stage if fallback_stage in STAGES else "controlled_preview")
     status, reason = None, None
@@ -79,5 +103,10 @@ def safe_diagnostic(exc, fallback_stage="controlled_preview"):
             status = code
             reason = reason or "unrecognized_reason_withheld"
             break
-    return {"stage": stage, "operation": operation, "exception_class": type(root).__name__,
-            "http_status": status, "google_api_reason": reason}
+    result = {"stage": stage, "operation": operation, "exception_class": type(root).__name__,
+              "http_status": status, "google_api_reason": reason}
+    origin = next((getattr(item, "_safe_source") for item in reversed(chain)
+                   if getattr(item, "_safe_source", None) in SOURCES), source if source in SOURCES else None)
+    if origin:
+        result["source"] = origin
+    return result

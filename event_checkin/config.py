@@ -95,7 +95,7 @@ class Settings:
             raise ConfigurationError("SMTP_SECURITY must be starttls or ssl.")
 
 
-def load_settings(profile=None, root=None):
+def load_settings(profile=None, root=None, *, single_entry=False):
     root = Path(root or ROOT).resolve()
     profile = profile or os.environ.get("EVENT_CHECKIN_PROFILE", "test")
     if profile not in ("test", "production"):
@@ -154,7 +154,7 @@ def load_settings(profile=None, root=None):
         raise ConfigurationError("WORKER_BATCH_SIZE must be at least 1.")
     if not s.station_name.strip() or len(s.station_name) > 80 or any(ord(c) < 32 or ord(c) == 127 for c in s.station_name):
         raise ConfigurationError("STAFF_STATION_NAME must contain 1 to 80 characters without control characters.")
-    validate_profile_isolation(s)
+    validate_profile_isolation(s, single_entry=single_entry)
     return s
 
 
@@ -163,7 +163,7 @@ def _overlap(left, right):
     return left == right or left in right.parents or right in left.parents
 
 
-def validate_profile_isolation(settings):
+def validate_profile_isolation(settings, *, single_entry=False):
     if _overlap(settings.runtime, settings.generated):
         raise ConfigurationError("Runtime and generated-card directories must be separate.")
     other_profile = "production" if settings.profile == "test" else "test"
@@ -182,8 +182,8 @@ def validate_profile_isolation(settings):
         for alternate in (other_path("RUNTIME_DIR", defaults[0]), other_path("GENERATED_DIR", defaults[1])):
             if _overlap(current, alternate):
                 raise ConfigurationError("Test and production storage must not share or contain each other's directories.")
-    if settings.profile == "production" and settings.email_enabled:
-        raise ConfigurationError("Keep EMAIL_ENABLED=false in production during this setup phase.")
+    if settings.profile == "production" and settings.email_enabled and not single_entry:
+        raise ConfigurationError("General production remains locked; email-enabled settings are accepted only by production-single-send.")
     manifest = settings.sources_file or other_path("SOURCES_FILE", "config/sources.production.json")
     if settings.profile == "test" and settings.spreadsheet_id and manifest.is_file():
         sources = read_source_manifest(manifest)

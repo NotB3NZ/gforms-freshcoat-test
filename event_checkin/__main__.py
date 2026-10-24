@@ -42,7 +42,8 @@ def main():
     email_test.add_argument("--authorize-send", action="store_true", required=True)
     args = parser.parse_args()
     try:
-        s = load_settings(profile=args.profile)
+        s = (load_settings(profile=args.profile, single_entry=True) if args.command == "production-single-send"
+             else load_settings(profile=args.profile))
         if s.profile == "production" and args.command not in ("profile-info", "check-config", "check-template", "preview") + production_cli.COMMANDS:
             s.require_operational()
         if args.command in production_cli.COMMANDS:

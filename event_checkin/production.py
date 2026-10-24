@@ -384,7 +384,9 @@ class BatchProcessor:
         if blocked:
             self.blocked(row, blocked)
             return "blocked"
-        mid = row.get("message_id") or "<" + str(uuid.uuid4()) + "@event-checkin.local>"
+        # The action already reserved a durable Message-ID before any issuance.
+        # Resuming before the SENDING write must reuse it, not mint a second ID.
+        mid = row.get("message_id") or resend_mid
         self.save(row, email_status="SENDING", message_id=mid,
                   email_attempts=str(int(row.get("email_attempts") or 0) + 1))
         # Last authoritative read, including every source and current recipient/tier,

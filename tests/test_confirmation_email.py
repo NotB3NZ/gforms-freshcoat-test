@@ -160,7 +160,7 @@ class ConfirmationEmailTests(unittest.TestCase):
         self.assertEqual(next(message.iter_attachments()).get_filename(), "event-card.png")
 
     def test_html_transport_keeps_rejection_uncertainty_and_message_ids(self):
-        mailer = SMTPMailer(Settings())
+        mailer = SMTPMailer(Settings(email_enabled=True))  # Fake transport still requires explicit opt-in.
         for exception, expected in ((smtplib.SMTPDataError(550, b"synthetic rejection"), EmailNotSent),
                                     (smtplib.SMTPServerDisconnected("synthetic disconnect"), EmailAmbiguous),
                                     (None, None)):
@@ -182,6 +182,9 @@ class ConfirmationEmailTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 mailer.send(*self.args, ticket_tier="Lite")
             with patch.object(mailer.settings, "require_email"):
+                with self.assertRaises(ConfigurationError):
+                    mailer.send(*self.args, ticket_tier="Unknown")
+                mailer.settings.email_enabled = True
                 with self.assertRaises(EmailNotSent):
                     mailer.send(*self.args, ticket_tier="Unknown")
             smtp.assert_not_called()

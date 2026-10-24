@@ -14,5 +14,6 @@ __pycache__/
 !.env.production.example
 config/sources.production.json
 config/production-header-init.approved.json
+config/single-entry-send.approved.json
 runtime-production/
 generated-production/

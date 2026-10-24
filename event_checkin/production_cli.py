@@ -10,10 +10,19 @@ from .mailer import SMTPMailer
 from .production import BatchProcessor, preview, private_json
 from .production_sheets import FixtureSheets, ProductionSheets, PRODUCTION_METADATA, source_mapping
 
-COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "batch-preview", "batch-run", "batch-resolve-email")
+COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "production-single-send", "batch-preview", "batch-run", "batch-resolve-email")
 
 
 def register(commands):
+    single = commands.add_parser("production-single-send", help="Only regular row 2; prepare read-only or explicitly send with email enabled")
+    operation = single.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--prepare", action="store_true", help="Read-only preflight; never reserves identities or sends")
+    operation.add_argument("--diagnose", action="store_true", help="Read-only diagnosis of this existing selection/action; never resumes it")
+    operation.add_argument("--apply", action="store_true", help="One explicitly authorized send of the saved selection")
+    operation.add_argument("--retry", action="store_true", help="Explicit retry of a known-unsent failure; never an uncertain delivery")
+    operation.add_argument("--resolve", choices=("sent", "retry"), help="Record staff review for this selection only; no SMTP")
+    single.add_argument("--selection", type=Path, required=True, help="Private selection path within production runtime")
+    single.add_argument("--authorize-send", action="store_true", help="Required for apply/retry; EMAIL_ENABLED must also be true")
     controlled = commands.add_parser("production-render-test", help="One explicit no-email rendering test with guarded restoration; general production stays locked")
     controlled.add_argument("--source", choices=("regular", "discount_15", "discount_10"))
     controlled.add_argument("--row", type=int, help="Temporary locator; preparation binds exact source/form/approval/tracking values")
@@ -67,6 +76,9 @@ def run(settings, args):
         raise ConfigurationError("Use --profile production for the separate production batch tools. The test worker is unchanged.")
     if not settings.event_id:
         raise ConfigurationError("Set a separate permanent production EVENT_ID locally before preparing batches.")
+    if args.command == "production-single-send":
+        from .single_send import run_command
+        return run_command(settings, args)
     if args.command == "production-render-test":
         from .controlled_render import run_command, ControlledTestBlocked
         try:

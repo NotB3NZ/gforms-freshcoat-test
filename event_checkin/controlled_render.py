@@ -106,6 +106,7 @@ class LiveTestSheet:
                     raise ControlledTestBlocked("Approved tracking headers are not initialized.")
             except Exception as exc:
                 exc._safe_operation_stage = "validate_header_snapshot_" + entry["source"]["id"]
+                exc._safe_source = entry["source"]["id"]
                 raise
         return self.reader.rows()
 

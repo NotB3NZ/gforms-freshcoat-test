@@ -2,7 +2,7 @@
 
 This project connects Google Form response Sheets to personalized FreshCoat cards, opaque QR tickets, email delivery, and a staff check-in server. The original single-source **test** workflow is preserved. The new **production** service handles three sources with four mandatory staff approvals and finite, exact-selection batches.
 
-**Current boundary:** local implementation and offline verification are complete. Production participant metadata writes, ticket issuance, recovery actions and email remain locked. The separately approved `production-init-headers` command is limited to the reviewed row-one header ranges, which were initialized and read back successfully on 2026-10-21. No switch or CLI flag bypasses that checkpoint. `.env.production` stays email-disabled. Do not replace the lock with the old single-source worker.
+**Current boundary:** general production batches and the production worker remain locked. The [personal-sender single-entry path](docs/SINGLE_ENTRY_SEND.md) is fixed to regular row 2 and remains disabled until explicit private activation and a deliberate send command. `EMAIL_ENABLED=false` always prohibits SMTP sending. The separately approved `production-init-headers` command remains limited to reviewed row-one ranges. `.env.production` stays email-disabled during implementation and preflight. Do not replace these locks with the old single-source worker.
 
 ## Separate test and production profiles
 
