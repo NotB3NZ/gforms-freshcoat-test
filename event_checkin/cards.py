@@ -1,14 +1,20 @@
+import base64
+import hashlib
 import json
 import re
 import subprocess
 import tempfile
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 
 import qrcode
-from PIL import Image
+from PIL import Image, ImageFont
 
 from .config import private_directory
+
+NAME_LIMIT = 160
+GOOGLE_SANS_DIR = Path(__file__).resolve().parent.parent / "templates/fonts/google-sans"
 
 
 class RenderError(RuntimeError):
@@ -66,17 +72,91 @@ def inspect_template(settings):
     return template, (width, height)
 
 
-def fitted_template(source, destination, template, name_field):
-    """Keep the design archive intact; fit variable names within its existing text box."""
+def google_sans_files():
+    """Only the reviewed, versioned Google Sans faces may satisfy this family."""
+    try:
+        manifest = json.loads((GOOGLE_SANS_DIR / "manifest.json").read_text())
+        files = {}
+        for entry in manifest["files"]:
+            path = GOOGLE_SANS_DIR / entry["file"]
+            if hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+                raise ValueError()
+            files[entry["weight"]] = path
+        if set(files) != {400, 700}:
+            raise ValueError()
+        return files
+    except (OSError, ValueError, KeyError, TypeError):
+        raise RenderError("Pinned Google Sans 400/700 assets are missing or changed; no font substitution allowed.") from None
+
+
+def assert_no_font_fallback(result):
+    """FreshCoat can exit zero after rendering fallback faces or missing glyphs.
+
+    Inspect both streams, but never expose renderer output containing names.
+    Fail closed on font/glyph warnings, including undeclared Google guesses.
+    """
+    for stream in (result.stdout, result.stderr):
+        text = stream.decode(errors="replace") if isinstance(stream, bytes) else (stream or "")
+        for line in text.splitlines():
+            if (re.search(r"\bwarning\b.*\b(fonts?|glyphs?|fallback|boxes)\b", line, re.I)
+                    or re.search(r"^\s*(?:no font data|no glyphs|missing[- ](?:fonts?|glyphs?)\b|fallback (?:face|font|glyph)\b)", line, re.I)):
+                raise RenderError("FreshCoat reported unresolved fonts or glyph fallback; no card accepted.")
+
+
+def render_values(template, name_field, name, participant_id, tier_field, tier):
+    if not isinstance(name, str) or not 0 < len(name) <= NAME_LIMIT:
+        raise RenderError("Card names must contain 1 to 160 characters; names are never truncated.")
+    values = {name_field: name}
+    if tier is not None:
+        values[tier_field] = tier
+    if "name" in template["fields"]["properties"]:
+        values["name"] = name  # Keep the separate legacy required field complete too.
+    if "ticket_id" in template["fields"]["properties"]:
+        values["ticket_id"] = participant_id
+    return values
+
+
+def prepared_template(template, name_field, name=None):
+    """Adjust only a rendering copy's schema, name fitting and font sources."""
+    template = deepcopy(template)
+    for key in {name_field, "name"}:
+        if key in template["fields"]["properties"]:
+            template["fields"]["properties"][key]["maxLength"] = NAME_LIMIT
+    local_fonts = None
     def visit(elements):
+        nonlocal local_fonts
         for el in elements:
             props = el.get("properties", {})
             value = props.get("value", "")
+            font = props.get("font", {})
+            if el.get("type") == "text" and font.get("family") == "Google Sans":
+                local_fonts = local_fonts or google_sans_files()
             if el.get("type") == "text" and isinstance(value, str) and re.search(r"{{\s*" + re.escape(name_field) + r"\s*}}", value):
                 props["fit"] = "shrink"
+                if name is not None and local_fonts and font.get("family") == "Google Sans":
+                    # FreshCoat shrinks against height before maxLines truncates.
+                    # Fit the complete line first with the same static face; a
+                    # 2% width allowance covers FreeType/Skia shaping rounding.
+                    face = ImageFont.truetype(str(local_fonts[font.get("weight", 400)]), size=font["size"])
+                    literal = re.sub(r"{{\s*" + re.escape(name_field) + r"\s*}}", lambda _: name, value)
+                    width = face.getlength(literal)
+                    available = el["size"]["width"] * 0.98
+                    if width > available:
+                        font["size"] *= available / width
             visit(props.get("children", []))
     for frame in template["template_data"]:
         visit(frame["elements"])
+    if local_fonts:
+        descriptor = {"kind": "local", "family": "Google Sans", "files": [
+            {"weight": weight, "src": "data:font/ttf;base64," + base64.b64encode(path.read_bytes()).decode("ascii")}
+            for weight, path in sorted(local_fonts.items())]}
+        template["fonts"] = [f for f in template.get("fonts", []) if f["family"] != "Google Sans"] + [descriptor]
+    return template
+
+
+def fitted_template(source, destination, template, name_field, name=None):
+    """Keep the installed design archive byte-for-byte intact."""
+    template = prepared_template(template, name_field, name)
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(destination, "w") as derived:
         for entry in original.infolist():
             data = json.dumps(template, ensure_ascii=False).encode() if entry.filename == "template.json" else original.read(entry.filename)
@@ -97,7 +177,6 @@ class CardRenderer:
         # not a shell command; subprocess gets separately supplied arguments.
         with tempfile.TemporaryDirectory(prefix="render-", dir=output) as temp:
             temp = Path(temp)
-            values = {s.name_field: name}
             if ticket_tier is not None:
                 if s.tier_field not in template["fields"]["properties"]:
                     raise RenderError("The configured tier field is not declared in this template.")
@@ -105,26 +184,20 @@ class CardRenderer:
                     raise RenderError("The configured tier field is declared but no text binds it in this frame.")
                 if ticket_tier not in ("Lite", "Regular", "Pro"):
                     raise RenderError("Choose ticket tier Lite, Regular or Pro.")
-                values[s.tier_field] = ticket_tier
-            if "name" in template["fields"]["properties"]:
-                # This required legacy field is separate from the actual displayName binding.
-                # Its current maxLength is 40; displayName itself has no such restriction.
-                limit = template["fields"]["properties"]["name"].get("maxLength", len(name))
-                values["name"] = name[:limit]
-            if "ticket_id" in template["fields"]["properties"]:
-                values["ticket_id"] = participant_id
+            values = render_values(template, s.name_field, name, participant_id, s.tier_field, ticket_tier)
             values_path = temp / "values.json"
             values_path.write_text(json.dumps(values, ensure_ascii=False))
             values_path.chmod(0o600)
             render_template = temp / "fitted-card.coat"
-            fitted_template(s.template, render_template, template, s.name_field)
+            fitted_template(s.template, render_template, template, s.name_field, name)
             args = [s.bun, str(s.freshcoat / "packages/cli/src/bin.ts"), "render", str(render_template),
                     "--values", str(values_path), "--frame", s.frame, "--scale", "1", "--format", "png", "--out", str(temp)]
             try:
-                subprocess.run(args, cwd=s.freshcoat, check=True, capture_output=True, timeout=120)
+                result = subprocess.run(args, cwd=s.freshcoat, check=True, capture_output=True, timeout=120)
             except (OSError, subprocess.SubprocessError):
                 # FreshCoat error output can contain field values. Do not log it.
                 raise RenderError("FreshCoat failed or timed out; check Bun, dependencies and template locally.") from None
+            assert_no_font_fallback(result)
             image = Image.open(temp / (s.frame + ".png")).convert("RGB")
             if image.size != dimensions:
                 raise RenderError("Unexpected render dimensions; QR coordinates need review.")

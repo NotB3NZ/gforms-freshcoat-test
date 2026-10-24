@@ -18,7 +18,8 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
-from .cards import CardRenderer, fitted_template, inspect_template
+from .cards import (CardRenderer, RenderError, assert_no_font_fallback, fitted_template,
+                    inspect_template, prepared_template, render_values)
 from .config import ConfigurationError, private_directory
 from .header_init import HeaderTransport, classify, load_plan, require_checkpoint_settings
 from .locking import file_lock
@@ -226,6 +227,7 @@ def verify_render(settings, path, name, tier, token):
     import numpy as np
     from PIL import Image
     template, dimensions = inspect_template(settings)
+    template = prepared_template(template, settings.name_field, name)
     original_hash = hashlib.sha256(settings.template.read_bytes()).hexdigest()
     if cv2.QRCodeDetector().detectAndDecode(cv2.imread(str(path)))[0] != token:
         raise ControlledTestBlocked("Rendered QR did not decode to the test token.")
@@ -254,17 +256,16 @@ def verify_render(settings, path, name, tier, token):
         temp = Path(temp)
         reference = temp / "literal-reference.coat"
         fitted_template(settings.template, reference, template, settings.name_field)
-        values = dict(expected)
-        if "name" in template["fields"]["properties"]:
-            values["name"] = name[:template["fields"]["properties"]["name"].get("maxLength", len(name))]
-        if "ticket_id" in template["fields"]["properties"]:
-            values["ticket_id"] = Path(path).parent.name
+        values = render_values(template, settings.name_field, name, Path(path).parent.name, settings.tier_field, tier)
         values_path = temp / "values.json"
         private_json(values_path, values)
         try:
-            subprocess.run([settings.bun, str(settings.freshcoat / "packages/cli/src/bin.ts"), "render", str(reference),
+            result = subprocess.run([settings.bun, str(settings.freshcoat / "packages/cli/src/bin.ts"), "render", str(reference),
                             "--values", str(values_path), "--frame", settings.frame, "--scale", "1", "--format", "png", "--out", str(temp)],
                            cwd=settings.freshcoat, capture_output=True, check=True, timeout=120)
+            assert_no_font_fallback(result)
+        except RenderError:
+            raise ControlledTestBlocked("Independent text verification detected font or glyph fallback.") from None
         except (OSError, subprocess.SubprocessError):
             raise ControlledTestBlocked("Independent text verification render failed.") from None
         with Image.open(path) as actual, Image.open(temp / (settings.frame + ".png")) as reference_image:

@@ -268,6 +268,7 @@ The older setup sections below describe the original single-source **test** work
 - The default QR rectangle is **x=400, y=450, size=400**, matching the reserved black square below the name. The QR includes a white quiet zone of at least four modules. Rendering refuses coordinates that intersect a text layer or fall outside the card.
 - FreshCoat renders a temporary copy with the name text set to shrink within its existing box. Layer positions, colors, font choice, and the source archive are preserved. Embedded fonts are reused. If you later introduce external relative assets, bundle them into the `.coat` archive before rendering.
 - Local tests render the real template with different names, confirm name pixels change, preserve the event band, test a long name, and decode the generated QR with OpenCV.
+- The final production badge's separate [long-name and Google Sans verification](docs/FINAL_BADGE_CHECKS.md) covers 160-character names, pinned local 400/700 faces, fallback rejection and synthetic-only preview reproduction without changing the installed badge or legacy test template.
 - `.gitignore` covers credentials, `.env.test` variants, environments, cards, scanner pending requests, and the server journal. Examples remain trackable. Coverage is tested in a temporary Git repository independently of local Git state. `.env.example` contains blank Sheet settings; enter live settings only in your ignored `.env.test`.
 
 ## Clone this project

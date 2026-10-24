@@ -1,0 +1,32 @@
+{
+  "family": "Google Sans",
+  "upstream_commit": "b7c8331cf620346575487ef8db0e2c729f014675",
+  "upstream_url": "https://raw.githubusercontent.com/google/fonts/b7c8331cf620346575487ef8db0e2c729f014675/ofl/googlesans/GoogleSans%5BGRAD%2Copsz%2Cwght%5D.ttf",
+  "upstream_sha256": "d0a87d835a944b8b40d0e82a5651bb59ab97b936a2aeed5946eb57e7b2a3a90a",
+  "version": "Version 14.000;[08f2ac800]",
+  "derivation": {
+    "tool": "fonttools==4.60.2",
+    "axes": {
+      "GRAD": 0,
+      "opsz": 17
+    },
+    "static_metadata": "Name IDs 2/4/6/17 and OS/2.fsSelection/head.macStyle normalized to Regular (400) and Bold (700).",
+    "timestamps": "Preserve upstream head.created and head.modified."
+  },
+  "files": [
+    {
+      "weight": 400,
+      "file": "GoogleSans-400.ttf",
+      "sha256": "e8892955dd9953c662bdbedcdc09cb4d62bccf653d38908eb0c2785a880c5d37",
+      "family": "Google Sans",
+      "style": "Regular"
+    },
+    {
+      "weight": 700,
+      "file": "GoogleSans-700.ttf",
+      "sha256": "74d0c00be370ecead312cbc6d5d9ba56bf2f20720bfcc83a44b09e8af38104e4",
+      "family": "Google Sans",
+      "style": "Bold"
+    }
+  ]
+}
