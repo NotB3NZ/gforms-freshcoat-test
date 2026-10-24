@@ -22,6 +22,13 @@ APPROVAL_COLUMNS = {
     "discount_10": ("A", "S", "T", "U"),
 }
 PRODUCTION_METADATA = METADATA + ("record_id", "source_id", "price_category", "ticket_tier")
+# Explicitly reviewed row-one duplicates. A source must also opt into this exact
+# policy in its private manifest and approved snapshot; legacy sources stay strict.
+REVIEWED_DUPLICATE_HEADERS = {
+    "regular": {"Email Address": ["C", "E"]},
+    "discount_15": {"Email Address": ["C", "F"]},
+    "discount_10": {"Email Address": ["C", "F"]},
+}
 
 
 class PacedWorksheet:
@@ -60,6 +67,10 @@ def source_mapping(source):
         raise SheetIntegrityError("Source field and approval columns overlap.")
     for _, col in mapping.values():
         column_number(col)
+    if "approved_duplicate_headers" in source:
+        if (source["approved_duplicate_headers"] != REVIEWED_DUPLICATE_HEADERS[source["id"]]
+                or mapping.get("email") != ("Email Address", "C")):
+            raise SheetIntegrityError("Unreviewed duplicate-header exception or recipient column; schema review required.")
     return mapping
 
 
@@ -70,8 +81,14 @@ class ProductionTable:
 
     def validate_header(self, header, require_metadata=False):
         nonempty = [h for h in header if h]
-        if len(nonempty) != len(set(nonempty)):
-            raise SheetIntegrityError("Duplicate production headers; schema review required.")
+        approved_duplicates = self.source.get("approved_duplicate_headers", {})
+        for label, columns in approved_duplicates.items():
+            positions = [index + 1 for index, value in enumerate(header) if value == label]
+            if positions != [column_number(col) for col in columns]:
+                raise SheetIntegrityError("Reviewed duplicate header moved or missing; schema review required.")
+        for label in set(nonempty):
+            if nonempty.count(label) > 1 and label not in approved_duplicates:
+                raise SheetIntegrityError("Duplicate production headers; schema review required.")
         for label, col in self.mapping.values():
             index = column_number(col) - 1
             if index >= len(header) or header[index] != label:
@@ -80,6 +97,10 @@ class ProductionTable:
             raise SheetIntegrityError("App-owned and staff/form headers overlap.")
         if require_metadata and any(k not in header for k in PRODUCTION_METADATA):
             raise SheetIntegrityError("Production tracking headers are missing; reviewed initialization is required.")
+        if approved_duplicates and (require_metadata or any(k in header for k in PRODUCTION_METADATA)):
+            start = max(column_number(col) for col in APPROVAL_COLUMNS[self.source["id"]])
+            if header[start:start + len(PRODUCTION_METADATA)] != list(PRODUCTION_METADATA):
+                raise SheetIntegrityError("Production tracking headers moved or missing from approved positions.")
         return header
 
     def header(self, require_metadata=False):
