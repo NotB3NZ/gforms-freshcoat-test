@@ -10,10 +10,12 @@ from .mailer import SMTPMailer
 from .production import BatchProcessor, preview, private_json
 from .production_sheets import FixtureSheets, ProductionSheets, PRODUCTION_METADATA, source_mapping
 
-COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "production-single-send", "batch-preview", "batch-run", "batch-resolve-email")
+COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "production-single-send", "production-inbox-test", "batch-preview", "batch-run", "batch-resolve-email")
 
 
 def register(commands):
+    from .organization_inbox import register as register_inbox_test
+    register_inbox_test(commands)
     single = commands.add_parser("production-single-send", help="Only regular row 2; prepare read-only or explicitly send with email enabled")
     operation = single.add_mutually_exclusive_group(required=True)
     operation.add_argument("--prepare", action="store_true", help="Read-only preflight; never reserves identities or sends")
@@ -74,6 +76,9 @@ def runtime_path(settings, path):
 def run(settings, args):
     if settings.profile != "production":
         raise ConfigurationError("Use --profile production for the separate production batch tools. The test worker is unchanged.")
+    if args.command == "production-inbox-test":
+        from .organization_inbox import run_command
+        return run_command(settings, args)
     if not settings.event_id:
         raise ConfigurationError("Set a separate permanent production EVENT_ID locally before preparing batches.")
     if args.command == "production-single-send":

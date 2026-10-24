@@ -65,6 +65,17 @@ class SMTPMailer:
         except Exception as exc:
             self._diagnose("single_entry_message_build", exc)
             raise EmailNotSent("Local message construction failed; no message submitted.") from None
+        def final_check():
+            if self.before_submit:
+                self.before_submit(message, recipient, name, participant_id, card_path, message_id, ticket_tier)
+        return self.submit_message(message, before_submit=final_check)
+
+    def submit_message(self, message, *, before_submit=None):
+        """Transport an already-built message once; composition needs no SMTP settings."""
+        s = self.settings
+        if not s.email_enabled:
+            raise ConfigurationError("EMAIL_ENABLED=false prohibits SMTP sending.")
+        s.require_email()
         smtp = None
         try:
             context = ssl.create_default_context()
@@ -87,8 +98,8 @@ class SMTPMailer:
             if not s.email_enabled:
                 raise ConfigurationError("EMAIL_ENABLED=false prohibits SMTP sending.")
             s.require_email()
-            if self.before_submit:
-                self.before_submit(message, recipient, name, participant_id, card_path, message_id, ticket_tier)
+            if before_submit:
+                before_submit()
         except Exception as exc:
             self._diagnose("single_entry_smtp_before_submit", exc)
             self._close(smtp)

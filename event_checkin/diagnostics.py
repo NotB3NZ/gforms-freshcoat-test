@@ -13,7 +13,7 @@ GOOGLE_REASONS = frozenset((
     "insufficientPermissions", "authError", "backendError", "SERVICE_DISABLED",
     "invalid_field_mask", "invalid_ranges_parameter", "invalid_range", "read_quota_exceeded",
 ))
-STAGES = frozenset(("controlled_preview", "open_production_sources_read_only",
+STAGES = frozenset(("controlled_preview", "organization_inbox_test", "open_production_sources_read_only",
                     "validate_headers_and_read_mapped_columns", "read_selected_original_cell_values",
                     "validate_single_registration", "validate_header_snapshot_regular",
                     "validate_header_snapshot_discount_15", "validate_header_snapshot_discount_10",
@@ -68,7 +68,7 @@ def safe_diagnostic(exc, fallback_stage="controlled_preview", *, source=None):
     frame = root.__traceback__
     trusted = {"event_checkin.controlled_render", "event_checkin.header_init", "event_checkin.production_sheets",
                "event_checkin.production", "event_checkin.sheets", "event_checkin.config",
-               "event_checkin.single_send", "event_checkin.mailer"}
+               "event_checkin.single_send", "event_checkin.mailer", "event_checkin.organization_inbox"}
     while frame is not None:
         module = frame.tb_frame.f_globals.get("__name__")
         if module in trusted:

@@ -2,7 +2,7 @@
 
 This project connects Google Form response Sheets to personalized FreshCoat cards, opaque QR tickets, email delivery, and a staff check-in server. The original single-source **test** workflow is preserved. The new **production** service handles three sources with four mandatory staff approvals and finite, exact-selection batches.
 
-**Current boundary:** general production batches and the production worker remain locked. The [personal-sender single-entry path](docs/SINGLE_ENTRY_SEND.md) is fixed to regular row 2 and remains disabled until explicit private activation and a deliberate send command. `EMAIL_ENABLED=false` always prohibits SMTP sending. The separately approved `production-init-headers` command remains limited to reviewed row-one ranges. `.env.production` stays email-disabled during implementation and preflight. Do not replace these locks with the old single-source worker.
+**Current boundary:** general production batches and the production worker remain locked. The [personal-sender single-entry path](docs/SINGLE_ENTRY_SEND.md) is fixed to regular row 2 and remains disabled until explicit private activation and a deliberate send command. The separate [organization inbox test](docs/ORGANIZATION_INBOX_TEST.md) uses fictional data and permanently invalid badges without reading Sheets. `EMAIL_ENABLED=false` always prohibits SMTP sending. The separately approved `production-init-headers` command remains limited to reviewed row-one ranges. `.env.production` stays email-disabled during implementation and preflight. Do not replace these locks with the old single-source worker.
 
 ## Separate test and production profiles
 
@@ -20,13 +20,13 @@ Run commands from this project directory using the working environment:
 | Settings | `.env.test` | `.env.production` |
 | History / journals | existing `runtime/` | `runtime-production/` |
 | Cards | existing `generated/` | `generated-production/` |
-| Template | `templates/card.coat` | `templates/event-badgev2.coat` |
+| Template | `templates/card.coat` | `templates/event-badge-final.coat` |
 | Sources | original single Sheet | private `config/sources.production.json` |
 | Execution | original worker | finite saved batches; live execution locked |
 
 Production offline fixtures use **additional** `offline/` subdirectories under its runtime and card directories. Each synthetic demonstration has its own session directory for journals/cards, retained in its plan and checkpoint. Fixture journals never mix with future live records or other demonstrations. Original environments, secrets, test history, source archives and populated settings were preserved. Private settings, manifests, journals, plans and cards remain ignored. Fresh clones use the tracked `.env.*.example` files and `config/sources.production.example.json`; fill private values locally.
 
-The loader rejects shared event IDs, overlapping profile storage, a test profile targeting a configured production Sheet, and enabled production email. The prepared event ID is `aws-scd-mindanao-2026`; confirm it at the next checkpoint and keep it permanent after ticket issuance. Organization SMTP credentials are deferred and cannot inherit personal test credentials.
+The loader rejects shared event IDs, overlapping profile storage, a test profile targeting a configured production Sheet, and enabled email outside the explicit scoped production commands. The prepared event ID is `aws-scd-mindanao-2026`; keep it permanent after ticket issuance. Organization SMTP credentials are configured privately and cannot inherit personal test credentials.
 
 ## Try the production workflow entirely offline
 
