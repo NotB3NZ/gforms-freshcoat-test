@@ -30,6 +30,11 @@ The loader rejects shared event IDs, overlapping profile storage, a test profile
 
 ## Try the production workflow entirely offline
 
+The [beginner batch command guide](docs/BATCH_COMMAND_GUIDE.md) covers IDs, source
+limits, all-source limits, every eligible entry and inclusive row ranges, with a
+separate phase-1 synthetic fixture and saved-plan execution examples. Live batch
+execution remains locked.
+
 These commands use only synthetic registrations. They never connect to Google or SMTP. The batch renders the real v2 template, so Bun and the existing FreshCoat dependencies are needed.
 
 ```sh
@@ -51,7 +56,7 @@ These commands use only synthetic registrations. They never connect to Google or
   --state-out runtime-production/offline/demo-state.json
 ```
 
-The preview shows each selected name/email, original raw tier, `mapped_tier`, price category, each approval, sent status, blocking reasons, and `in_batch`. It never prints tokens. Preview output is private when using real data. Only `in_batch=true` entries can be rendered/sent by the saved plan. `--limit` caps eligible delivery attempts; waiting registrations do not consume it. Waiting rows in that finite selected snapshot may receive app-owned record IDs and `WAITING_APPROVAL`, without a participant ID, QR token, or ACTIVE ticket. This metadata work can exceed the delivery limit, but never expands beyond the saved snapshot. Eligible rows beyond the limit are untouched.
+New previews separate selected entries, blocked entries with reasons, and eligible entries beyond the limit. Each shows name/email, raw and mapped tier, price category, four approvals, physical row and sent status. Tokens are never printed. Only saved selected entries may receive app-owned tracking updates, rendering or delivery attempts; blocked and over-limit rows remain untouched. `--limit N` counts eligible attempts, while `--limit all` saves every eligible entry in that finite snapshot. Configured source order, then physical row order, determines selection. Older version-1 saved plans retain their explicit waiting-row metadata scope for compatibility; new plans do not initialize waiting rows.
 
 The synthetic batch saves a private checkpoint after every metadata change. **For every later preview or run, use the saved state as `--fixture`, not the original sample.** Re-running the same plan with that state cannot resend completed entries. The CLI refuses to overwrite existing plans or replace a checkpoint with the original fixture. A different `--state-out` starts a separate local demonstration; use a new plan too. Files are mode 0600 in private, ignored runtime directories.
 
@@ -151,6 +156,13 @@ processing status. A live issuance test still requires separate approval.
 | Explicit list | `--id regular:R-FIRST --id discount_15:R-SECOND` |
 | One source | `--source regular` (also `discount_15` or `discount_10`) |
 | Event-wide | `--all` |
+| Inclusive source row range | `--source discount_15 --start-row 10 --end-row 13` |
+
+Use `--limit N` for a positive eligible-attempt limit (default 25), or `--limit all`
+for every eligible entry in this finite preview. `--all` continues to select all
+sources and does not remove the attempt limit. If row 11 is sent, a 10–13 range
+includes only eligible rows among 10, 12 and 13. Both inclusive bounds are required
+with one source. Exact execution never backfills blocked targets from other rows.
 
 A `record_id` (`R-…`) identifies a registration before any ticket exists. A `participant_id` (`P-…`) identifies an issued ticket and is also accepted when unique; it can be source-qualified. IDs survive sorting while stopped. A new row without metadata appears as `regular:row:2`, for example. This is a temporary locator, not a permanent identity: a plan binds its source and recipient/name/tier snapshot and rejects changed/moved records. Once a permanent record ID is saved, use that ID. Missing, ambiguous or repeated targets fail; selection never falls through to someone else.
 

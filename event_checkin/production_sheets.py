@@ -178,6 +178,7 @@ class ProductionSheets:
         if writable:
             settings.require_operational()
         sources = production_sources(settings)
+        self.source_order = [source["id"] for source in sources]
         from .production import digest
         self.dataset = digest(sources)
         if {s["id"] for s in sources} != set(APPROVAL_COLUMNS):
@@ -264,13 +265,17 @@ class FixtureSheets:
             raise ConfigurationError("Use a synthetic fixture containing all three sources.")
         self.data = deepcopy(payload)
         self.dataset = payload.get("fixture_id", "synthetic-default")
+        self.source_order = list(payload.get("source_order", payload["sources"]))
+        if len(self.source_order) != 3 or set(self.source_order) != set(APPROVAL_COLUMNS):
+            raise ConfigurationError("Synthetic source order must contain all three sources exactly once.")
 
     def require_write(self):
         pass
 
     def rows(self):
         rows = []
-        for source, records in self.data["sources"].items():
+        for source in self.source_order:
+            records = self.data["sources"][source]
             for index, data in enumerate(records, 2):
                 rows.append(Row(index, deepcopy(data), source))
         validate_production_identities(rows)

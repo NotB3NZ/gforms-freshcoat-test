@@ -131,7 +131,7 @@ def prepare(settings, selection_path, reader=None):
     require(fresh.data == row.data and reader.capture(SOURCE, NUMBER) == original,
             "Registration or original cells changed during preparation.")
     frozen = preview(settings, SimpleNamespace(rows=lambda: rows, live=reader.live, dataset=reader.dataset),
-                     ids=[target(row)], limit=1)[1]
+                     ids=[target(row)], limit=1, selection_version=1)[1]
     require(len(frozen["entries"]) == 1 and frozen["entries"][0]["process"], "One eligible entry is required.")
     selection = {"version": 1, "source": SOURCE, "row": NUMBER, "event_id": EVENT_ID,
                  "policy": policy_identity(policy), "fingerprint": fingerprint(row), "selected_data": row.data,

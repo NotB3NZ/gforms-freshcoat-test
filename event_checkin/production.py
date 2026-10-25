@@ -20,6 +20,28 @@ from .sheets import SheetIntegrityError, normalize_email
 from .tiers import TIERS, resolve_tier
 from .test_identity import is_test_token
 
+SOURCES = ("regular", "discount_15", "discount_10")
+ORDERING = "Configured source order, then ascending physical row number."
+
+
+def validate_selection(ids=None, source=None, all_sources=False, *, start_row=None, end_row=None):
+    if sum((bool(ids), bool(source), bool(all_sources))) != 1:
+        raise SheetIntegrityError("Choose exactly one selector: IDs, source, or all sources.")
+    if source and source not in SOURCES:
+        raise SheetIntegrityError("Unknown source selection.")
+    if start_row is not None or end_row is not None:
+        if (not source or type(start_row) is not int or type(end_row) is not int
+                or start_row < 2 or end_row < start_row):
+            raise SheetIntegrityError("Row ranges require one source and both inclusive bounds, with 2 <= start row <= end row.")
+
+
+def source_order(sheet, rows):
+    order = list(getattr(sheet, "source_order", dict.fromkeys(r.source_id for r in rows)))
+    order += [key for key in SOURCES if key not in order]
+    if len(order) != 3 or set(order) != set(SOURCES):
+        raise SheetIntegrityError("Invalid configured source order.")
+    return order
+
 
 def approved(value):
     # bool is checked explicitly: 1, nonempty strings and "FALSE" are NOT approval.
@@ -124,18 +146,17 @@ def reasons(row, rows, event_id, action="send"):
     return blocked
 
 
-def select(rows, ids=None, source=None, all_sources=False):
-    if sum((bool(ids), bool(source), bool(all_sources))) != 1:
-        raise SheetIntegrityError("Choose exactly one selector: IDs, source, or all sources.")
+def select(rows, ids=None, source=None, all_sources=False, *, start_row=None, end_row=None):
+    validate_selection(ids, source, all_sources, start_row=start_row, end_row=end_row)
     if source:
-        if source not in ("regular", "discount_15", "discount_10"):
-            raise SheetIntegrityError("Unknown source selection.")
-        return [r for r in rows if r.source_id == source]
+        return [r for r in rows if r.source_id == source
+                and (start_row is None or start_row <= r.number <= end_row)]
     if all_sources:
         return list(rows)
     selected = []
     for identifier in ids:
-        matches = [r for r in rows if identifier in (target(r), r.get("record_id"), r.get("participant_id"),
+        matches = [r for r in rows if identifier in (target(r), r.source_id + ":row:" + str(r.number),
+                                                     r.get("record_id"), r.get("participant_id"),
                                                      r.source_id + ":" + text(r.get("participant_id"))) and identifier]
         if len(matches) != 1:
             raise SheetIntegrityError("Target is missing or ambiguous; use a source-qualified permanent record ID or a fresh preview row locator.")
@@ -145,39 +166,58 @@ def select(rows, ids=None, source=None, all_sources=False):
     return selected
 
 
-def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=25, action="send", regenerate=False):
-    if not isinstance(limit, int) or limit < 1 or action not in ("send", "retry", "resend"):
+def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=25, action="send", regenerate=False,
+            start_row=None, end_row=None, selection_version=2):
+    """Version 2 selects eligible attempts only; version 1 preserves existing scoped callers/plans."""
+    if ((type(limit) is not int or limit < 1) and not (selection_version == 2 and limit == "all")) or action not in ("send", "retry", "resend"):
         raise SheetIntegrityError("Choose a positive batch limit and send/retry/resend action.")
+    if type(selection_version) is not int or selection_version not in (1, 2):
+        raise SheetIntegrityError("Unsupported batch selection version.")
+    validate_selection(ids, source, all_sources, start_row=start_row, end_row=end_row)
     rows = sheet.rows()  # ALL sources must be readable, even for one targeted registration.
     validate_production_identities(rows)
-    selected = select(rows, ids, source, all_sources)
+    order = source_order(sheet, rows)
+    if selection_version == 2:
+        rows = sorted(rows, key=lambda row: (order.index(row.source_id), row.number))
+    selected = select(rows, ids, source, all_sources, start_row=start_row, end_row=end_row)
+    if selection_version == 2:
+        selected.sort(key=lambda row: (order.index(row.source_id), row.number))
     entries, report, count = [], [], 0
     for row in selected:
         blocked = reasons(row, rows, settings.event_id, action)
         eligible = not blocked
-        included = eligible and count < limit
+        included = eligible and (limit == "all" or count < limit)
         if included:
             count += 1
-        display = {"target": target(row), "name": row.get("name"), "email": row.get("email"),
+        display = {"target": target(row), "source": row.source_id, "row": row.number,
+                   "name": row.get("name"), "email": row.get("email"),
                    "tier": row.get("tier"), "mapped_tier": details(row)[1], "price_category": row.get("_price_category"),
                    "approvals": {key: approved(row.get(key)) for key in APPROVAL_HEADERS},
                    "state": row.get("state") or ("WAITING_APPROVAL" if not has_approvals(row) else "UNPROCESSED"),
                    "sent": row.get("email_status") == "SENT" or row.get("state") == "SENT",
-                   "blocking_reasons": blocked, "in_batch": included}
+                   "blocking_reasons": blocked, "in_batch": included,
+                   "selection_status": "selected" if included else ("blocked" if blocked else "over_limit")}
         report.append(display)
         # A finite snapshot of selected waiting rows may receive registration IDs/state,
         # never tickets. They do not consume the delivery limit. Sent/failed/unselected
         # records are never requeued by this discovery step.
         waiting = not has_approvals(row) and not row.get("ticket_token") and row.get("event_id") in ("", settings.event_id)
-        if included or waiting:
+        if included or (selection_version == 1 and waiting):
             entries.append({"target": target(row), "source": row.source_id,
                             "record_id": row.get("record_id"), "fingerprint": fingerprint(row),
                             "issued_identity": issued_identity(row) if row.get("ticket_token") else "",
                             "delivery": [row.get(k) for k in ("email_status", "message_id", "email_sent_at", "email_attempts")],
                             "process": included})
-    plan = {"version": 1, "plan_id": str(uuid.uuid4()), "event_id": settings.event_id,
+            if selection_version == 2:
+                entries[-1]["snapshot_row"] = row.number
+    plan = {"version": selection_version, "plan_id": str(uuid.uuid4()), "event_id": settings.event_id,
             "profile": settings.profile, "live": sheet.live, "dataset": sheet.dataset,
-            "action": action, "regenerate": regenerate, "limit": limit, "entries": entries}
+            "action": action, "regenerate": regenerate, "limit": count if limit == "all" else limit, "entries": entries}
+    if selection_version == 2:
+        plan.update(requested_limit=limit, source_order=order, ordering=ORDERING,
+                    scope={"ids": list(ids or []), "source": source, "all_sources": bool(all_sources),
+                           "start_row": start_row, "end_row": end_row},
+                    tracking_scope={"policy": "selected_entries_only", "targets": [e["target"] for e in entries]})
     return report, plan
 
 
@@ -291,14 +331,27 @@ class BatchProcessor:
 
     def execute(self, plan):
         self.sheet.require_write()  # Fail BEFORE journal creation, discovery, rendering or SMTP.
-        if (plan.get("version"), plan.get("event_id"), plan.get("profile"), plan.get("live"), plan.get("dataset")) != (
-                1, self.s.event_id, self.s.profile, self.sheet.live, self.sheet.dataset):
+        version = plan.get("version")
+        if (type(version) is not int or version not in (1, 2)
+                or (plan.get("event_id"), plan.get("profile"), plan.get("live"), plan.get("dataset")) != (
+                    self.s.event_id, self.s.profile, self.sheet.live, self.sheet.dataset)):
             raise SheetIntegrityError("Batch belongs to another event, profile or adapter mode.")
-        if plan.get("action") not in ("send", "retry", "resend") or not isinstance(plan.get("limit"), int) or plan["limit"] < 1:
-            raise SheetIntegrityError("Invalid saved batch action/limit.")
         entries = plan.get("entries", [])
+        empty_all = version == 2 and plan.get("requested_limit") == "all" and not entries
+        if (plan.get("action") not in ("send", "retry", "resend") or type(plan.get("limit")) is not int
+                or plan["limit"] < (0 if empty_all else 1)):
+            raise SheetIntegrityError("Invalid saved batch action/limit.")
         if sum(bool(e["process"]) for e in entries) > plan["limit"] or len({e["target"] for e in entries}) != len(entries):
             raise SheetIntegrityError("Invalid or repeated batch targets.")
+        if version == 2:
+            requested = plan.get("requested_limit")
+            if (any(e["process"] is not True for e in entries)
+                    or plan.get("tracking_scope") != {"policy": "selected_entries_only", "targets": [e["target"] for e in entries]}
+                    or (requested == "all" and plan["limit"] != len(entries))
+                    or (requested != "all" and (type(requested) is not int or requested < 1 or requested != plan["limit"]))):
+                raise SheetIntegrityError("Invalid eligible-only saved selection or tracking scope.")
+        if not entries:
+            return []  # Empty snapshots create no journals, claims, tracking or render artifacts.
         outcomes = []
         with file_lock(self.s.runtime / "worker.lock", blocking=False), file_lock(self.s.runtime / "sheets.lock"):
             self.journal = BatchJournal(self.s)

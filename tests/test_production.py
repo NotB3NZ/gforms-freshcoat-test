@@ -82,7 +82,9 @@ class BatchTests(unittest.TestCase):
         self.temp.cleanup()
 
     def plan(self, sheet, **kwargs):
-        return preview(self.s, sheet, **(kwargs or {"all_sources": True}))[1]
+        # Preserve coverage for previously saved version-1 plans, including their
+        # explicit waiting-row metadata scope. New CLI selections use version 2.
+        return preview(self.s, sheet, selection_version=1, **(kwargs or {"all_sources": True}))[1]
 
     def execute(self, sheet, plan):
         return BatchProcessor(self.s, sheet, self.renderer, self.mailer).execute(plan)
@@ -713,7 +715,7 @@ class ProductionCliTests(unittest.TestCase):
             smtp.assert_not_called()
             data = json.loads(state.read_text())
             waiting, ready = data["sources"]["regular"]
-            self.assertEqual(waiting["state"], "WAITING_APPROVAL")
+            self.assertEqual(waiting, json.loads(fixture.read_text())["sources"]["regular"][0])
             self.assertEqual(ready["ticket_tier"], "Regular")
             self.assertEqual(ready["email_status"], "DISABLED")
             self.assertNotIn("ticket_token", data["sources"]["discount_15"][0])

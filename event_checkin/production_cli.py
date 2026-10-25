@@ -1,4 +1,5 @@
 """Production command surface: local fixture execution, explicit read-only live previews."""
+import argparse
 import json
 import uuid
 from dataclasses import replace
@@ -7,10 +8,24 @@ from pathlib import Path
 from .cards import CardRenderer
 from .config import ConfigurationError, production_sources
 from .mailer import SMTPMailer
-from .production import BatchProcessor, preview, private_json
+from .production import BatchProcessor, preview, private_json, validate_selection
 from .production_sheets import FixtureSheets, ProductionSheets, PRODUCTION_METADATA, source_mapping
 
 COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "production-single-send", "production-inbox-test", "batch-preview", "batch-run", "batch-resolve-email")
+
+
+def batch_limit(value):
+    if value == "all":
+        return value
+    if not value.isascii() or not value.isdecimal() or int(value) < 1:
+        raise argparse.ArgumentTypeError("Use a positive integer or the exact word 'all'.")
+    return int(value)
+
+
+def physical_row(value):
+    if not value.isascii() or not value.isdecimal() or int(value) < 2:
+        raise argparse.ArgumentTypeError("Use a physical row number of at least 2; row 1 is headers.")
+    return int(value)
 
 
 def register(commands):
@@ -45,8 +60,10 @@ def register(commands):
     selection = inspect.add_mutually_exclusive_group(required=True)
     selection.add_argument("--id", dest="ids", action="append", help="Repeat for an exact list; source:R-ID, P-ID, or source:row:N")
     selection.add_argument("--source", choices=("regular", "discount_15", "discount_10"))
-    selection.add_argument("--all", dest="all_sources", action="store_true")
-    inspect.add_argument("--limit", type=int, default=25, help="Maximum eligible delivery attempts; waiting rows do not consume it")
+    selection.add_argument("--all", dest="all_sources", action="store_true", help="Select all sources; does not remove the attempt limit")
+    inspect.add_argument("--start-row", type=physical_row, help="Inclusive physical row; requires --source and --end-row")
+    inspect.add_argument("--end-row", type=physical_row, help="Inclusive physical row; requires --source and --start-row")
+    inspect.add_argument("--limit", type=batch_limit, default=25, help="Positive eligible-attempt limit (default 25), or 'all' for this finite snapshot")
     inspect.add_argument("--action", choices=("send", "retry", "resend"), default="send")
     inspect.add_argument("--regenerate", action="store_true", help="Regenerate selected cards with the same identities and issued tiers")
     inspect.add_argument("--plan-out", type=Path, help="Private JSON within this profile's runtime directory")
@@ -115,6 +132,9 @@ def run(settings, args):
         print(json.dumps(ProductionSheets(settings).schema_plan(), indent=2))
         return
     fixture = getattr(args, "fixture", None)
+    if args.command == "batch-preview":
+        validate_selection(args.ids, args.source, args.all_sources,
+                           start_row=args.start_row, end_row=args.end_row)
     plan = None
     artifact_settings = settings
     if fixture:
@@ -142,11 +162,19 @@ def run(settings, args):
         sheet = ProductionSheets(settings, writable=args.command != "batch-preview")
     if args.command == "batch-preview":
         report, plan = preview(settings, sheet, ids=args.ids, source=args.source, all_sources=args.all_sources,
-                               limit=args.limit, action=args.action, regenerate=args.regenerate)
+                               limit=args.limit, action=args.action, regenerate=args.regenerate,
+                               start_row=args.start_row, end_row=args.end_row, selection_version=2)
         if fixture:
             plan["fixture_session"] = session
-        print(json.dumps({"private_preview": report, "delivery_attempts": sum(e["process"] for e in plan["entries"]),
-                          "waiting_snapshot_entries": sum(not e["process"] for e in plan["entries"])}, indent=2, ensure_ascii=False))
+        print(json.dumps({"ordering": plan["ordering"], "source_order": plan["source_order"],
+                          "scope": plan["scope"], "requested_limit": plan["requested_limit"],
+                          "selected_entries": [r for r in report if r["in_batch"]],
+                          "blocked_entries": [r for r in report if r["selection_status"] == "blocked"],
+                          "eligible_beyond_limit": [r for r in report if r["selection_status"] == "over_limit"],
+                          "tracking_scope": plan["tracking_scope"],
+                          "tracking_note": "Only saved selected entries may receive app-owned tracking updates. Blocked and over-limit entries remain untouched; no replacement entries are added.",
+                          "delivery_attempts": len(plan["entries"]), "waiting_snapshot_entries": 0,
+                          "live_execution": "LOCKED"}, indent=2, ensure_ascii=False))
         if args.plan_out:
             path = runtime_path(artifact_settings, args.plan_out)
             if path.exists():

@@ -1,0 +1,246 @@
+{
+  "synthetic": true,
+  "fixture_id": "batch-selection-phase1-synthetic-v1",
+  "source_order": [
+    "regular",
+    "discount_15",
+    "discount_10"
+  ],
+  "sources": {
+    "regular": [
+      {
+        "record_id": "R-SYN-REG-002",
+        "name": "Fictional REG Example 2",
+        "email": "REG.2@example.invalid",
+        "tier": "Regular",
+        "_price_category": "regular",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-REG-003",
+        "name": "Fictional REG Example 3",
+        "email": "REG.3@example.invalid",
+        "tier": "Regular",
+        "_price_category": "regular",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-REG-004",
+        "name": "Fictional REG Example 4",
+        "email": "REG.4@example.invalid",
+        "tier": "Regular",
+        "_price_category": "regular",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      }
+    ],
+    "discount_15": [
+      {
+        "record_id": "R-SYN-D15-002",
+        "name": "Fictional D15 Example 2",
+        "email": "D15.2@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-003",
+        "name": "Fictional D15 Example 3",
+        "email": "D15.3@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-004",
+        "name": "Fictional D15 Example 4",
+        "email": "D15.4@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-005",
+        "name": "Fictional D15 Example 5",
+        "email": "D15.5@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-006",
+        "name": "Fictional D15 Example 6",
+        "email": "D15.6@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-007",
+        "name": "Fictional D15 Example 7",
+        "email": "D15.7@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-008",
+        "name": "Fictional D15 Example 8",
+        "email": "D15.8@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-009",
+        "name": "Fictional D15 Example 9",
+        "email": "D15.9@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "FALSE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-010",
+        "name": "Fictional D15 Example 10",
+        "email": "D15.10@example.invalid",
+        "tier": "Pro",
+        "_price_category": "15_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-011",
+        "name": "Fictional D15 Example 11",
+        "email": "D15.11@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE",
+        "state": "SENT",
+        "email_status": "SENT",
+        "ticket_status": "ACTIVE",
+        "participant_id": "P-SYN-D15-011",
+        "ticket_token": "SYNTHETIC_FIXTURE_ONLY_SENT_ROW_11",
+        "source_id": "discount_15",
+        "price_category": "15_percent_discount",
+        "render_status": "RENDERED",
+        "render_attempts": "1",
+        "email_attempts": "1",
+        "message_id": "<synthetic-completed-row11@example.invalid>",
+        "email_sent_at": "2026-01-01T09:00:00+08:00",
+        "checked_in_at": "2026-01-01T10:00:00+08:00",
+        "normalized_email": "d15.11@example.invalid",
+        "ticket_name": "Fictional D15 Example 11",
+        "ticket_tier": "Regular"
+      },
+      {
+        "record_id": "R-SYN-D15-012",
+        "name": "Fictional D15 Example 12",
+        "email": "D15.12@example.invalid",
+        "tier": "Lite",
+        "_price_category": "15_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-013",
+        "name": "Fictional D15 Example 13",
+        "email": "D15.13@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D15-014",
+        "name": "Fictional D15 Example 14",
+        "email": "D15.14@example.invalid",
+        "tier": "Regular",
+        "_price_category": "15_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE",
+        "state": "CANCELLED",
+        "ticket_status": "CANCELLED"
+      }
+    ],
+    "discount_10": [
+      {
+        "record_id": "R-SYN-D10-002",
+        "name": "Fictional D10 Example 2",
+        "email": "D10.2@example.invalid",
+        "tier": "Lite",
+        "_price_category": "10_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      },
+      {
+        "record_id": "R-SYN-D10-003",
+        "name": "Fictional D10 Example 3",
+        "email": "D10.3@example.invalid",
+        "tier": "Regular",
+        "_price_category": "10_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE",
+        "state": "RENDER_ERROR",
+        "render_status": "FAILED"
+      },
+      {
+        "record_id": "R-SYN-D10-004",
+        "name": "Fictional D10 Example 4",
+        "email": "D10.4@example.invalid",
+        "tier": "UNREVIEWED",
+        "_price_category": "10_percent_discount",
+        "confirmation": "TRUE",
+        "reference_matched": "TRUE",
+        "price_matched": "TRUE",
+        "payment_received": "TRUE"
+      }
+    ]
+  }
+}
