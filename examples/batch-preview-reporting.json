@@ -1,0 +1,27 @@
+{
+  "synthetic": true,
+  "fixture_id": "batch-preview-reporting-synthetic-v1",
+  "source_order": ["regular", "discount_15", "discount_10"],
+  "sources": {
+    "regular": [
+      {},
+      {"confirmation": false, "reference_matched": "FALSE", "price_matched": false, "payment_received": "FALSE"},
+      {"confirmation": true, "reference_matched": "TRUE", "price_matched": true, "payment_received": "TRUE", "_price_category": "regular"},
+      {"name": "Fictional Partial Name"},
+      {"email": "partial@example.invalid"},
+      {"tier": "Pro"},
+      {"record_id": "R-SYN-HISTORY"},
+      {"state": "EMAIL_ERROR", "last_error": "Fictional failed job"},
+      {"email_status": "SENT"},
+      {"name": "Fictional Eligible", "email": "eligible@example.invalid", "tier": "Regular", "_price_category": "regular", "confirmation": true, "reference_matched": true, "price_matched": true, "payment_received": true},
+      {"name": "Fictional Eligible", "email": "ELIGIBLE@example.invalid", "tier": "Regular", "_price_category": "regular", "confirmation": true, "reference_matched": true, "price_matched": true, "payment_received": true},
+      {"name": "Fictional Beyond Limit", "email": "beyond@example.invalid", "tier": "Lite", "_price_category": "regular", "confirmation": true, "reference_matched": true, "price_matched": true, "payment_received": true}
+    ],
+    "discount_15": [
+      {"name": "Fictional Later Source", "email": "later@example.invalid", "tier": "Pro", "_price_category": "15_percent_discount", "confirmation": true, "reference_matched": true, "price_matched": true, "payment_received": true}
+    ],
+    "discount_10": [
+      {"confirmation": false}
+    ]
+  }
+}

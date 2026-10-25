@@ -123,7 +123,7 @@ class ProductionTable:
             self.ws.update(range_name=rowcol_to_a1(1, plan["existing_columns"] + 1),
                            values=[plan["append"]], value_input_option="RAW")
 
-    def rows(self, require_metadata=False):
+    def rows(self, require_metadata=False, *, include_empty=False):
         from gspread.utils import rowcol_to_a1
         header = self.header(require_metadata)
         # One batch read of only the reviewed columns; no ID/proof-file downloads.
@@ -140,7 +140,7 @@ class ProductionTable:
         rows = []
         for index in range(height):
             values = {key: (col[index][0] if index < len(col) and col[index] else "") for key, col in zip(keys, columns)}
-            if not any(value != "" for value in values.values()):
+            if not include_empty and not any(value != "" for value in values.values()):
                 continue
             if values.get("source_id") not in (None, "", self.source["id"]):
                 raise SheetIntegrityError("Stored source identity conflicts with its physical Sheet.")
@@ -224,12 +224,15 @@ class ProductionSheets:
             for table in self.tables.values():
                 table.initialize()
 
-    def rows(self):
+    def preview_rows(self):
+        return self.rows(include_empty=True)
+
+    def rows(self, *, include_empty=False):
         rows = []
         try:
             for table in self.tables.values():
                 with diagnostic_context("read_production_source", table.source["id"]):
-                    rows.extend(table.rows(require_metadata=self.writable))
+                    rows.extend(table.rows(require_metadata=self.writable, include_empty=include_empty))
         except SheetIntegrityError:
             raise
         except Exception:

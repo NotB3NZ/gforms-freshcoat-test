@@ -578,6 +578,38 @@ class ProductionAdapterTests(unittest.TestCase):
                 self.assertEqual(batch[2], "UNFORMATTED_VALUE")
                 self.assertEqual(len(batch[1]), 7)  # Read only 3 form fields and 4 approvals.
 
+    def test_preview_counts_blank_gaps_and_checkbox_rows_without_changing_discovery(self):
+        # Exercise the live adapter's read path entirely with local worksheets.
+        # Unused grid capacity (row_count=10) must not become phantom exclusions.
+        sheet = ProductionSheets.__new__(ProductionSheets)
+        sheet.writable = False
+        sheet.dataset = 'synthetic-reporting-adapter'
+        sheet.source_order = [source['id'] for source in self.sources]
+        sheet.tables = {}
+        originals = {}
+        for source in self.sources:
+            table = self.table(source, tracking=True)
+            width = len(table.ws.values[0])
+            blank, checkboxes, partial, history = [[''] * width for _ in range(4)]
+            for col in APPROVAL_COLUMNS[source['id']]:
+                checkboxes[column_number(col) - 1] = False
+            partial[column_number(source['fields']['name']['column']) - 1] = 'Fictional Partial'
+            history[table.ws.values[0].index('last_error')] = 'Fictional processing failure'
+            table.ws.values.extend([blank, checkboxes, partial, history])
+            sheet.tables[source['id']] = table
+            originals[source['id']] = deepcopy(table.ws.values)
+        self.assertEqual([r.number for r in sheet.rows() if r.source_id == 'regular'], [2, 4, 5, 6])
+        report, _, summary = preview(Settings(profile='production', event_id='synthetic'), sheet,
+                                     all_sources=True, include_summary=True)
+        self.assertEqual([r['row'] for r in report if r['source'] == 'regular'], [2, 5, 6])
+        for source, table in sheet.tables.items():
+            self.assertEqual(summary[source]['actual_registrations'], 3)
+            self.assertEqual(summary[source]['empty_checkbox_only_rows_excluded'], 2)
+            self.assertEqual(table.ws.values, originals[source])
+            self.assertFalse(any(call[0] in ('update', 'batch_update', 'add_cols') for call in table.ws.calls))
+            batches = [call for call in table.ws.calls if call[0] == 'batch_get']
+            self.assertTrue(all(len(call[1]) == 7 + len(PRODUCTION_METADATA) for call in batches))
+
     def test_missing_moved_duplicate_approval_header_fails_before_participant_read(self):
         for kind in ("missing", "moved", "duplicate", "misspelling"):
             table = self.table(self.sources[0])
@@ -749,7 +781,7 @@ class ProductionCliTests(unittest.TestCase):
         sheet.live = True
         with patch("event_checkin.production_cli.ProductionSheets", return_value=sheet), \
                 patch("event_checkin.production_cli.CardRenderer") as renderer:
-            result, output, _ = self.cli("batch-preview", "--live", "--all")
+            result, output, _ = self.cli("batch-preview", "--live", "--all", "--details")
             self.assertIsNone(result)
             self.assertIn("synthetic@example.test", output)
             renderer.assert_not_called()

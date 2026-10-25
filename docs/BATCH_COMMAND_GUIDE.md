@@ -100,7 +100,38 @@ processor is running.
 
 ## Read the preview
 
-The preview reports source order, scope, requested limit and these separate lists:
+The preview defaults to source order, scope, requested limit and a `summary` for
+each source in the requested scope:
+
+- `actual_registrations`: rows with any name, email, tier or stored app metadata.
+- `selected_eligible_registrations`: eligible attempts within the global limit.
+- `eligible_beyond_limit`: eligible registrations beyond that limit.
+- `already_sent_registrations`: rows with sent state or email status.
+- `blocked_registrations` and `blocked_by_reason`: registrations with blockers
+  other than the already-sent exclusion, grouped by reason.
+- `empty_checkbox_only_rows_excluded`: rows with no name, email, tier or stored
+  app metadata, regardless of whether their staff checkboxes are checked.
+
+Partially completed registrations and rows with any processing, identity or
+delivery history remain registrations. The source's derived `_price_category`
+does not establish a registration; stored `price_category` does. Blank gaps in
+the mapped read snapshot count as excluded, but unused Sheet capacity does not.
+Already-sent rows with additional problems also count as blocked. Reason counts
+may overlap because a row can have several blockers. With `--action resend`,
+already-sent rows can also count as selected or beyond the limit. Duplicate
+reasons are grouped without the canonical target ID; eligibility is unchanged.
+
+Add `--details` for the private participant lists and exact tracking targets:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-preview \
+  --fixture examples/batch-preview-reporting.json --all --limit 1 --details
+```
+
+The same command without `--details` shows just the summary and selection context.
+The synthetic reporting fixture includes blank/checkbox-only rows, incomplete
+registrations, processing history, sent status and equivalent duplicates.
+The detail lists are:
 
 - `selected_entries`: exact eligible attempts saved for execution.
 - `blocked_entries`: registrations in the requested scope that failed eligibility,

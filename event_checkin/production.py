@@ -15,7 +15,7 @@ from pathlib import Path
 from .config import private_directory
 from .locking import file_lock
 from .mailer import EmailNotSent
-from .production_sheets import APPROVAL_HEADERS, validate_production_identities
+from .production_sheets import APPROVAL_HEADERS, PRODUCTION_METADATA, validate_production_identities
 from .sheets import SheetIntegrityError, normalize_email
 from .tiers import TIERS, resolve_tier
 from .test_identity import is_test_token
@@ -50,6 +50,41 @@ def approved(value):
 
 def text(value):
     return value if isinstance(value, str) else ""
+
+
+def is_registration(row):
+    # Staff checkboxes and the adapter's derived _price_category do not establish
+    # a registration. Preserve even malformed/zero-valued stored data for review.
+    return any(row.get(key) is not None and row.get(key) != ""
+               for key in ("name", "email", "tier", *PRODUCTION_METADATA))
+
+
+def preview_summary(report, excluded, sources):
+    summary = {source: {"actual_registrations": 0, "selected_eligible_registrations": 0,
+                        "eligible_beyond_limit": 0, "already_sent_registrations": 0,
+                        "blocked_registrations": 0, "blocked_by_reason": {},
+                        "empty_checkbox_only_rows_excluded": excluded.count(source)}
+               for source in sources}
+    for entry in report:
+        counts = summary[entry["source"]]
+        counts["actual_registrations"] += 1
+        counts["selected_eligible_registrations"] += int(entry["in_batch"])
+        counts["eligible_beyond_limit"] += int(entry["selection_status"] == "over_limit")
+        counts["already_sent_registrations"] += int(entry["sent"])
+        # Sent-only exclusions have their own count. Sent rows with other problems
+        # still expose those problems; resend/retry eligibility is unchanged.
+        blocked = [reason for reason in entry["blocking_reasons"]
+                   if reason != "already sent; explicit resend required"]
+        counts["blocked_registrations"] += int(bool(blocked))
+        for reason in blocked:
+            # Group duplicate reasons without exposing a canonical target ID or
+            # creating a separate summary group for every duplicate email group.
+            for prefix in ("duplicate of issued canonical registration", "duplicate of approved canonical registration"):
+                if reason.startswith(prefix + " "):
+                    reason = prefix
+                    break
+            counts["blocked_by_reason"][reason] = counts["blocked_by_reason"].get(reason, 0) + 1
+    return summary
 
 
 def recipient(row):
@@ -167,14 +202,21 @@ def select(rows, ids=None, source=None, all_sources=False, *, start_row=None, en
 
 
 def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=25, action="send", regenerate=False,
-            start_row=None, end_row=None, selection_version=2):
-    """Version 2 selects eligible attempts only; version 1 preserves existing scoped callers/plans."""
+            start_row=None, end_row=None, selection_version=2, include_summary=False):
+    """Select finite attempts; optionally return a third, per-source summary.
+
+    Version 1 preserves existing waiting-row scope. Reporting never changes a
+    saved plan's schema or any execution/eligibility rule.
+    """
     if ((type(limit) is not int or limit < 1) and not (selection_version == 2 and limit == "all")) or action not in ("send", "retry", "resend"):
         raise SheetIntegrityError("Choose a positive batch limit and send/retry/resend action.")
     if type(selection_version) is not int or selection_version not in (1, 2):
         raise SheetIntegrityError("Unsupported batch selection version.")
     validate_selection(ids, source, all_sources, start_row=start_row, end_row=end_row)
-    rows = sheet.rows()  # ALL sources must be readable, even for one targeted registration.
+    # Include blank gaps in the read snapshot for exclusion counts, without
+    # changing the execution adapter's ordinary discovery behavior.
+    reader = getattr(sheet, "preview_rows", sheet.rows) if selection_version == 2 else sheet.rows
+    rows = reader()  # ALL sources must be readable, even for one targeted registration.
     validate_production_identities(rows)
     order = source_order(sheet, rows)
     if selection_version == 2:
@@ -182,8 +224,11 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
     selected = select(rows, ids, source, all_sources, start_row=start_row, end_row=end_row)
     if selection_version == 2:
         selected.sort(key=lambda row: (order.index(row.source_id), row.number))
-    entries, report, count = [], [], 0
+    entries, report, excluded, count = [], [], [], 0
     for row in selected:
+        if selection_version == 2 and not is_registration(row):
+            excluded.append(row.source_id)
+            continue
         blocked = reasons(row, rows, settings.event_id, action)
         eligible = not blocked
         included = eligible and (limit == "all" or count < limit)
@@ -218,6 +263,9 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
                     scope={"ids": list(ids or []), "source": source, "all_sources": bool(all_sources),
                            "start_row": start_row, "end_row": end_row},
                     tracking_scope={"policy": "selected_entries_only", "targets": [e["target"] for e in entries]})
+    if include_summary:
+        scoped_sources = order if all_sources else [key for key in order if key == source or any(r.source_id == key for r in selected)]
+        return report, plan, preview_summary(report, excluded, scoped_sources)
     return report, plan
 
 

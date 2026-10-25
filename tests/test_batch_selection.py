@@ -4,19 +4,21 @@ import io
 import json
 import tempfile
 import unittest
+import uuid
 from contextlib import redirect_stdout, redirect_stderr
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
 from event_checkin.config import ROOT, Settings
-from event_checkin.production import BatchProcessor, preview
+from event_checkin.production import BatchProcessor, is_registration, preview
 from event_checkin.production_cli import register
-from event_checkin.production_sheets import FixtureSheets, APPROVAL_HEADERS
-from event_checkin.sheets import SheetIntegrityError
+from event_checkin.production_sheets import FixtureSheets, APPROVAL_HEADERS, PRODUCTION_METADATA
+from event_checkin.sheets import Row, SheetIntegrityError
 from tests.test_production import Renderer, Sheet, record
 
 FIXTURE = ROOT/'examples/batch-selection-phase1.json'
+REPORTING_FIXTURE = ROOT/'examples/batch-preview-reporting.json'
 
 
 class BatchSelectionTests(unittest.TestCase):
@@ -163,6 +165,86 @@ class BatchSelectionTests(unittest.TestCase):
         with self.assertRaises(SheetIntegrityError):self.execute(plan)
         self.assertFalse(self.s.runtime.exists())
 
+    def test_reporting_excludes_only_empty_rows_and_preserves_partial_history(self):
+        self.sheet = Sheet()
+        self.sheet.data = json.loads(REPORTING_FIXTURE.read_text())
+        before = deepcopy(self.sheet.data)
+        report, plan, summary = self.plan(all_sources=True, limit=1, include_summary=True)
+        self.assertEqual([r['row'] for r in report if r['source'] == 'regular'], list(range(5, 14)))
+        self.assertEqual([e['snapshot_row'] for e in plan['entries']], [11])
+        self.assertEqual(summary['regular'], {
+            'actual_registrations': 9, 'selected_eligible_registrations': 1,
+            'eligible_beyond_limit': 1, 'already_sent_registrations': 1,
+            'blocked_registrations': 7, 'empty_checkbox_only_rows_excluded': 3,
+            'blocked_by_reason': {
+                'waiting for approval: ' + ', '.join(APPROVAL_HEADERS): 6,
+                'review invalid name/email or unknown raw tier/price category': 6,
+                'failed job requires explicit retry': 1,
+                'duplicate of approved canonical registration': 1,
+            }})
+        self.assertEqual(summary['discount_15']['eligible_beyond_limit'], 1)
+        self.assertEqual(summary['discount_10']['actual_registrations'], 0)
+        self.assertEqual(summary['discount_10']['empty_checkbox_only_rows_excluded'], 1)
+        self.assertNotIn('regular:row:11', json.dumps(summary))
+        self.assertEqual(self.sheet.data, before)
+        self.assertFalse(self.sheet.attempts)
+        self.assertFalse(self.s.runtime.exists())
+        self.assertFalse(self.s.generated.exists())
+
+    def test_every_stored_metadata_field_preserves_a_registration(self):
+        for key in ('name', 'email', 'tier', *PRODUCTION_METADATA):
+            for value in ('history', 0, False, ' '):
+                with self.subTest(key=key, value=value):
+                    self.assertTrue(is_registration(Row(2, {key: value}, 'regular')))
+        self.assertFalse(is_registration(Row(2, dict.fromkeys(PRODUCTION_METADATA, None), 'regular')))
+        self.assertFalse(is_registration(Row(2, {'name': '', 'email': None, 'tier': '',
+            '_price_category': 'regular', **dict.fromkeys(APPROVAL_HEADERS, True)}, 'regular')))
+
+    def test_exclusion_counts_follow_source_range_ids_and_empty_scopes(self):
+        self.sheet = FixtureSheets(json.loads(REPORTING_FIXTURE.read_text()))
+        report, plan, summary = self.plan(source='regular', start_row=2, end_row=5, include_summary=True)
+        self.assertEqual(list(summary), ['regular'])
+        self.assertEqual(summary['regular']['actual_registrations'], 1)
+        self.assertEqual(summary['regular']['empty_checkbox_only_rows_excluded'], 3)
+        self.assertEqual([r['row'] for r in report], [5])
+        self.assertFalse(plan['entries'])
+        report, plan, summary = self.plan(ids=['regular:row:2'], include_summary=True)
+        self.assertFalse(report); self.assertFalse(plan['entries'])
+        self.assertEqual(summary['regular']['empty_checkbox_only_rows_excluded'], 1)
+        _, _, summary = self.plan(source='discount_15', start_row=99, end_row=100, include_summary=True)
+        self.assertEqual(list(summary), ['discount_15'])
+        self.assertFalse(any(value for value in summary['discount_15'].values()))
+
+    def test_summary_sent_counts_preserve_send_retry_and_resend_rules(self):
+        for action, selected, blocked in (('send', 0, 0), ('retry', 0, 1), ('resend', 1, 0)):
+            with self.subTest(action=action):
+                _, plan, summary = self.plan(source='discount_15', start_row=11, end_row=11,
+                                             action=action, include_summary=True)
+                counts = summary['discount_15']
+                self.assertEqual(counts['already_sent_registrations'], 1)
+                self.assertEqual(counts['selected_eligible_registrations'], selected)
+                self.assertEqual(counts['blocked_registrations'], blocked)
+                self.assertEqual(len(plan['entries']), selected)
+
+    def test_blank_or_checkbox_rows_do_not_change_selected_plan(self):
+        # Appending empty rows must not alter identities, duplicate claims, ordering,
+        # saved entries or the finite tracking scope (including a global limit).
+        for limit in (1, 5, 'all'):
+            with self.subTest(limit=limit), patch('event_checkin.production.uuid.uuid4', return_value='fixed-plan-id'):
+                _, before = self.plan(all_sources=True, limit=limit)
+                modified = deepcopy(self.sheet.data)
+                for records in modified['sources'].values():
+                    records.extend([{}, dict.fromkeys(APPROVAL_HEADERS, False)])
+                report, after, summary = preview(self.s, FixtureSheets(modified), all_sources=True,
+                                                limit=limit, include_summary=True)
+                self.assertEqual(before, after)
+                self.assertTrue(all(s['empty_checkbox_only_rows_excluded'] == 2 for s in summary.values()))
+
+    def test_identity_validation_still_fails_closed_even_outside_scope(self):
+        self.sheet.data['sources']['discount_10'].append({'participant_id': 'P-SYN-PARTIAL'})
+        with self.assertRaisesRegex(SheetIntegrityError, 'Partial production ticket identity'):
+            self.plan(source='regular', include_summary=True)
+
 
 class BatchSelectionCLITests(unittest.TestCase):
     def setUp(self):
@@ -183,7 +265,7 @@ class BatchSelectionCLITests(unittest.TestCase):
         with patch('gspread.service_account',side_effect=AssertionError('No Google')), \
              patch('smtplib.SMTP') as smtp,patch('smtplib.SMTP_SSL') as smtp_ssl, \
              patch('event_checkin.production_cli.CardRenderer',Renderer):
-            result,out,err=self.cli('batch-preview','--fixture',FIXTURE,'--source','discount_15','--start-row','10','--end-row','13','--limit','2','--plan-out',plan)
+            result,out,err=self.cli('batch-preview','--fixture',FIXTURE,'--source','discount_15','--start-row','10','--end-row','13','--limit','2','--details','--plan-out',plan)
             self.assertIsNone(result,err)
             report=json.JSONDecoder().raw_decode(out)[0]
             self.assertEqual([r['row'] for r in report['selected_entries']],[10,12])
@@ -204,6 +286,38 @@ class BatchSelectionCLITests(unittest.TestCase):
         self.assertTrue(report['scope']['all_sources'])
         result,out,err=self.cli('batch-preview','--fixture',FIXTURE,'--all','--limit','1')
         self.assertIsNone(result,err);self.assertEqual(json.loads(out)['delivery_attempts'],1)
+
+    def test_summary_is_default_and_details_do_not_change_summary_or_plan(self):
+        paths = [self.s.runtime/'offline/summary.json', self.s.runtime/'offline/details.json']
+        saved, outputs = [], []
+        with patch('gspread.service_account', side_effect=AssertionError('No Google')), \
+             patch('socket.create_connection', side_effect=AssertionError('No network')), \
+             patch('smtplib.SMTP') as smtp, patch('smtplib.SMTP_SSL') as smtp_ssl, \
+             patch('event_checkin.production_cli.CardRenderer') as renderer, \
+             patch('uuid.uuid4', return_value=uuid.UUID('00000000-0000-0000-0000-000000000001')):
+            for path, details in zip(paths, ([], ['--details'])):
+                result, out, err = self.cli('batch-preview', '--fixture', REPORTING_FIXTURE,
+                                            '--all', '--limit', '1', '--plan-out', path, *details)
+                self.assertIsNone(result, err)
+                outputs.append(json.JSONDecoder().raw_decode(out)[0])
+                saved.append(json.loads(path.read_text()))
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            smtp.assert_not_called(); smtp_ssl.assert_not_called(); renderer.assert_not_called()
+        default, detailed = outputs
+        self.assertEqual(default['summary'], detailed['summary'])
+        self.assertEqual(saved[0], saved[1])
+        self.assertEqual(saved[0]['version'], 2)
+        for key in ('selected_entries', 'blocked_entries', 'eligible_beyond_limit', 'tracking_scope'):
+            self.assertNotIn(key, default)
+            self.assertIn(key, detailed)
+        for private in ('Fictional', '@example.invalid', 'R-SYN-HISTORY', 'regular:row:11'):
+            self.assertNotIn(private, json.dumps(default))
+        self.assertEqual(len(detailed['selected_entries']), 1)
+        self.assertEqual(len(detailed['blocked_entries']), 7)
+        self.assertEqual(len(detailed['eligible_beyond_limit']), 2)
+        self.assertEqual(default['live_execution'], 'LOCKED')
+        self.assertFalse((self.s.runtime/'production-batches.sqlite3').exists())
+        self.assertFalse(self.s.generated.exists())
 
     def test_invalid_cli_arguments_never_construct_google_reader(self):
         for flags in (('--source','regular','--start-row','3'),('--all','--start-row','3','--end-row','5'),

@@ -66,6 +66,7 @@ def register(commands):
     inspect.add_argument("--limit", type=batch_limit, default=25, help="Positive eligible-attempt limit (default 25), or 'all' for this finite snapshot")
     inspect.add_argument("--action", choices=("send", "retry", "resend"), default="send")
     inspect.add_argument("--regenerate", action="store_true", help="Regenerate selected cards with the same identities and issued tiers")
+    inspect.add_argument("--details", action="store_true", help="Include private participant lists alongside the per-source summary")
     inspect.add_argument("--plan-out", type=Path, help="Private JSON within this profile's runtime directory")
     run = commands.add_parser("batch-run", help="Execute exactly a saved plan and exit; live production remains locked")
     run.add_argument("--plan", type=Path, required=True)
@@ -161,20 +162,24 @@ def run(settings, args):
             settings.require_operational()  # Block before Google, rendering or SMTP adapters.
         sheet = ProductionSheets(settings, writable=args.command != "batch-preview")
     if args.command == "batch-preview":
-        report, plan = preview(settings, sheet, ids=args.ids, source=args.source, all_sources=args.all_sources,
+        report, plan, summary = preview(settings, sheet, ids=args.ids, source=args.source, all_sources=args.all_sources,
                                limit=args.limit, action=args.action, regenerate=args.regenerate,
-                               start_row=args.start_row, end_row=args.end_row, selection_version=2)
+                               start_row=args.start_row, end_row=args.end_row, selection_version=2, include_summary=True)
         if fixture:
             plan["fixture_session"] = session
-        print(json.dumps({"ordering": plan["ordering"], "source_order": plan["source_order"],
+        output = {"ordering": plan["ordering"], "source_order": plan["source_order"],
                           "scope": plan["scope"], "requested_limit": plan["requested_limit"],
-                          "selected_entries": [r for r in report if r["in_batch"]],
-                          "blocked_entries": [r for r in report if r["selection_status"] == "blocked"],
-                          "eligible_beyond_limit": [r for r in report if r["selection_status"] == "over_limit"],
-                          "tracking_scope": plan["tracking_scope"],
+                          "summary": summary,
+                          "summary_note": "Counts cover the requested scope. Already-sent rows with other blockers also count as blocked; reason counts may overlap. Resend selections may include already-sent rows. Exclusions cover empty rows present in the mapped read snapshot, not unused Sheet capacity.",
                           "tracking_note": "Only saved selected entries may receive app-owned tracking updates. Blocked and over-limit entries remain untouched; no replacement entries are added.",
                           "delivery_attempts": len(plan["entries"]), "waiting_snapshot_entries": 0,
-                          "live_execution": "LOCKED"}, indent=2, ensure_ascii=False))
+                          "live_execution": "LOCKED"}
+        if args.details:
+            output.update(selected_entries=[r for r in report if r["in_batch"]],
+                          blocked_entries=[r for r in report if r["selection_status"] == "blocked"],
+                          eligible_beyond_limit=[r for r in report if r["selection_status"] == "over_limit"],
+                          tracking_scope=plan["tracking_scope"])
+        print(json.dumps(output, indent=2, ensure_ascii=False))
         if args.plan_out:
             path = runtime_path(artifact_settings, args.plan_out)
             if path.exists():
