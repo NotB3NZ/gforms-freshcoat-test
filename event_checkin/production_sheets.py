@@ -4,12 +4,12 @@ Only the mapped name/email/tier, staff approval cells and app metadata are read.
 Uploaded documents are never fetched. Initializing app headers never touches responses.
 """
 import re
-import time
 from copy import deepcopy
 
 from .config import METADATA, ConfigurationError, production_sources
 from .sheets import Row, SheetIntegrityError, validate_identities
 from .diagnostics import diagnostic_context
+from .google_reads import pace_http, shared_scheduler, fresh_read
 
 APPROVAL_HEADERS = {
     "confirmation": "Confirmation",
@@ -30,21 +30,6 @@ REVIEWED_DUPLICATE_HEADERS = {
     "discount_15": {"Email Address": ["C", "F"]},
     "discount_10": {"Email Address": ["C", "F"]},
 }
-
-
-class PacedWorksheet:
-    """Share a conservative request clock across the three Sheets (one host)."""
-    def __init__(self, worksheet, pace):
-        self.worksheet, self.pace = worksheet, pace
-
-    def __getattr__(self, name):
-        value = getattr(self.worksheet, name)
-        if not callable(value):
-            return value
-        def request(*args, **kwargs):
-            self.pace()
-            return value(*args, **kwargs)
-        return request
 
 
 def column_number(column):
@@ -171,7 +156,7 @@ class ProductionTable:
 class ProductionSheets:
     live = True
 
-    def __init__(self, settings, writable=False):
+    def __init__(self, settings, writable=False, read_scheduler=None):
         import gspread
         self.settings = settings
         self.writable = writable
@@ -186,23 +171,17 @@ class ProductionSheets:
         scope = "https://www.googleapis.com/auth/spreadsheets" + ("" if writable else ".readonly")
         client = gspread.service_account(filename=str(settings.service_account), scopes=[scope])
         client.set_timeout((10, 30))
+        self.read_scheduler = read_scheduler or shared_scheduler(settings)
+        pace_http(client.http_client, self.read_scheduler)
         self.tables = {}
-        self.last_request = 0.0
-        def pace():
-            delay = 1.1 - (time.monotonic() - self.last_request)
-            if delay > 0:
-                time.sleep(delay)
-            self.last_request = time.monotonic()
         try:
             for source in sources:
                 with diagnostic_context("open_production_source", source["id"]):
-                    pace()
                     book = client.open_by_key(source["spreadsheet_id"])
-                    pace()
                     ws = book.get_worksheet_by_id(source["tab_id"])
                     if ws.title != source["tab_name"]:
                         raise SheetIntegrityError("Production tab title/ID changed; schema review required.")
-                    self.tables[source["id"]] = ProductionTable(settings, source, PacedWorksheet(ws, pace))
+                    self.tables[source["id"]] = ProductionTable(settings, source, ws)
         except SheetIntegrityError:
             raise
         except Exception:
@@ -227,6 +206,7 @@ class ProductionSheets:
     def preview_rows(self):
         return self.rows(include_empty=True)
 
+    @fresh_read
     def rows(self, *, include_empty=False):
         rows = []
         try:

@@ -28,6 +28,7 @@ from .production_sheets import PRODUCTION_METADATA, ProductionSheets, validate_p
 from .sheets import Row, SheetIntegrityError
 from .test_identity import TEST_TOKEN_PREFIX
 from .diagnostics import diagnostic_operation
+from .google_reads import pace_http, shared_scheduler, fresh_read
 
 TEST_FIELDS = frozenset((
     "record_id", "event_id", "participant_id", "ticket_token", "normalized_email", "ticket_name", "ticket_tier",
@@ -90,15 +91,22 @@ class LiveTestSheet:
     live = True
 
     @diagnostic_operation("open_production_sources_read_only")
-    def __init__(self, settings):
+    def __init__(self, settings, *, read_scheduler=None, reviewed_reads=False):
         require_checkpoint_settings(settings)
         self.settings = settings
         self.plan = load_plan(settings, settings.root / "config/production-header-init.approved.json")
-        self.reader = ProductionSheets(settings, writable=False)
-        self.headers = HeaderTransport(settings, self.plan, apply=False)
+        self.read_scheduler = read_scheduler or shared_scheduler(settings)
+        self.reviewed_reads = reviewed_reads
+        self.headers = HeaderTransport(settings, self.plan, apply=False, read_scheduler=self.read_scheduler)
+        if reviewed_reads:
+            from .reviewed_sheets import ReviewedSheets
+            self.reader = ReviewedSheets(settings, self.plan, self.headers)
+        else:
+            self.reader = ProductionSheets(settings, writable=False, read_scheduler=self.read_scheduler)
         self.writer = None  # Write scope is requested only after a durable snapshot.
 
     @diagnostic_operation("validate_headers_and_read_mapped_columns")
+    @fresh_read
     def rows(self):
         for entry in self.plan["sources"]:
             try:
@@ -111,6 +119,7 @@ class LiveTestSheet:
         return self.reader.rows()
 
     @diagnostic_operation("read_selected_original_cell_values")
+    @fresh_read
     def capture(self, source, number):
         """Preserve exact userEnteredValue objects, including blanks/formulas/types.
 
@@ -119,6 +128,8 @@ class LiveTestSheet:
         """
         if type(number) is not int or number < 2:
             raise ControlledTestBlocked("Target must be a participant-row locator, never row one.")
+        if getattr(self, 'reviewed_reads', False):
+            return self.reader.capture(source, number)
         entry = next(e for e in self.plan["sources"] if e["source"]["id"] == source)
         from .production_sheets import source_mapping, column_number
         from gspread.utils import rowcol_to_a1
@@ -171,6 +182,7 @@ class LiveTestSheet:
                                              scopes=["https://www.googleapis.com/auth/spreadsheets"])
             client.set_timeout((10, 30))
             self.writer = client.http_client
+            pace_http(self.writer, self.read_scheduler)
         entry = next(e for e in self.plan["sources"] if e["source"]["id"] == snapshot["source"])
         requests = [{"updateCells": {
             "range": {"sheetId": entry["source"]["tab_id"], "startRowIndex": snapshot["row"] - 1,

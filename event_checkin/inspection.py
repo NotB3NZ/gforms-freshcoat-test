@@ -197,7 +197,7 @@ def aggregate(sources):
             'duplicates': duplicate_report,
             'counting_basis': 'Rows with a name, email, tier or processing status; checkbox-only rows excluded. No timestamp or unrelated responses read.',
             'email_comparison': 'Trim and case-fold only; Gmail dots and plus tags remain distinct.',
-            'mapping_status': 'Canonical tiers and the three approved source-specific aliases only; no guessed aliases or suffix stripping.'}
+            'mapping_status': 'Canonical tiers and the explicitly approved source-specific aliases only; no guessed aliases or suffix stripping.'}
 
 
 def run_command(settings, args):

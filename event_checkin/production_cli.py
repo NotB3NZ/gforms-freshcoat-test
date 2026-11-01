@@ -68,10 +68,31 @@ def register(commands):
     inspect.add_argument("--regenerate", action="store_true", help="Regenerate selected cards with the same identities and issued tiers")
     inspect.add_argument("--details", action="store_true", help="Include private participant lists alongside the per-source summary")
     inspect.add_argument("--plan-out", type=Path, help="Private JSON within this profile's runtime directory")
-    run = commands.add_parser("batch-run", help="Execute exactly a saved plan and exit; live production remains locked")
+    run = commands.add_parser("batch-run", help="Execute a saved fixture or the separately authorized exact three-entry pilot")
     run.add_argument("--plan", type=Path, required=True)
     run.add_argument("--fixture", type=Path, help="Synthetic local fixture; live execution stays locked")
     run.add_argument("--state-out", type=Path, help="Private checkpoint JSON within runtime-production/offline")
+    run.add_argument("--pilot", action="store_true", help="Only the pinned official three-entry pilot; all other live batches stay locked")
+    operation = run.add_mutually_exclusive_group()
+    operation.add_argument("--preflight", action="store_true", help="Read-only pilot schema, eligibility and history checks")
+    operation.add_argument("--diagnose", action="store_true", help="Read-only pilot delivery diagnosis; never resumes")
+    operation.add_argument("--activate", action="store_true", help="Enable only this pilot authorization; does not enable email")
+    operation.add_argument("--deactivate", action="store_true", help="Disable only this pilot authorization; no account access")
+    operation.add_argument("--retry", metavar="TARGET", help="Explicit known-unsent retry of one original pilot target")
+    operation.add_argument("--resolve", metavar="TARGET", help="Record provider review for one original pilot target; no SMTP")
+    operation.add_argument("--remaining-first-sends", action="store_true", help="Resume only original pilot rows 3 and 4; retain row 2's unresolved history")
+    operation.add_argument("--prepare-resend", metavar="TARGET", help="Prepare a disabled local authorization for the single deliberate row-2 resend")
+    operation.add_argument("--resend-preflight", metavar="TARGET", help="Read-only checks of the separately bound deliberate resend")
+    operation.add_argument("--activate-resend", metavar="TARGET", help="Enable only the deliberate resend authorization while email is disabled")
+    operation.add_argument("--deactivate-resend", metavar="TARGET", help="Disable the separate deliberate resend authorization")
+    operation.add_argument("--resend", metavar="TARGET", help="Perform the single deliberate resend using the existing verified ticket")
+    operation.add_argument("--resend-retry", metavar="TARGET", help="Explicit retry of a known-unsent deliberate resend using its same Message-ID")
+    operation.add_argument("--resend-diagnose", metavar="TARGET", help="Read-only diagnosis of the linked resend attempt")
+    operation.add_argument("--resend-resolve", metavar="TARGET", help="Record provider review for the resend only, preserving the original attempt")
+    run.add_argument("--acknowledge-duplicate", action="store_true", help="Explicit acknowledgement that the row-2 recipient may receive duplicate email")
+    run.add_argument("--outcome", choices=("accepted", "not-sent"), help="Provider-review outcome for --resolve")
+    run.add_argument("--evidence", help="Required provider-review reference for --resolve; stored privately")
+    run.add_argument("--authorize-pilot", action="store_true", help="Explicit authority for this exact plan only")
     resolve = commands.add_parser("batch-resolve-email", help="Record a staff delivery-review outcome for exactly one ID")
     resolve.add_argument("identifier")
     resolve.add_argument("--outcome", required=True, choices=("sent", "retry"))
@@ -99,6 +120,17 @@ def run(settings, args):
         return run_command(settings, args)
     if not settings.event_id:
         raise ConfigurationError("Set a separate permanent production EVENT_ID locally before preparing batches.")
+    if args.command == "batch-run":
+        pilot_options = ("preflight", "diagnose", "activate", "deactivate", "retry", "resolve", "outcome", "evidence", "authorize_pilot",
+                         "remaining_first_sends", "prepare_resend", "resend_preflight", "activate_resend", "deactivate_resend",
+                         "resend", "resend_retry", "resend_diagnose", "resend_resolve", "acknowledge_duplicate")
+        if getattr(args, "pilot", False):
+            if args.fixture or args.state_out:
+                raise ConfigurationError("Pilot execution cannot use fixture or checkpoint switches.")
+            from .pilot import run_command
+            return run_command(settings, args)
+        if any(getattr(args, key, None) for key in pilot_options):
+            raise ConfigurationError("Pilot controls require --pilot and its exact pinned plan.")
     if args.command == "production-single-send":
         from .single_send import run_command
         return run_command(settings, args)

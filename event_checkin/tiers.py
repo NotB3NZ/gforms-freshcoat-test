@@ -2,16 +2,16 @@
 
 TIERS = ("Lite", "Regular", "Pro")
 APPROVED_TIER_ALIASES = {
-    "regular": {"Lite (₱199)": "Lite"},
-    "discount_15": {"Lite (₱170)": "Lite", "Pro (₱297)": "Pro"},
-    "discount_10": {},
+    "regular": {"Lite (₱199)": "Lite", "Pro (₱349)": "Pro", "Regular (₱289)": "Regular"},
+    "discount_15": {"Lite (₱170)": "Lite", "Pro (₱297)": "Pro", "Regular (₱246)": "Regular"},
+    "discount_10": {"Lite (₱180)": "Lite", "Regular (₱261)": "Regular"},
 }
 
 
 def resolve_tier(source_id, raw_label):
     """Return a canonical tier or None; source, case, spacing and price are exact.
 
-    Preserve the previously supported canonical values. Only the three approved
+    Preserve the previously supported canonical values. Only the explicitly approved
     source-specific labels extend that set. Price category is deliberately not an
     input: a source category must never determine or override the ticket tier.
     """

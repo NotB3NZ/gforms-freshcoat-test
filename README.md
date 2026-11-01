@@ -30,6 +30,18 @@ The loader rejects shared event IDs, overlapping profile storage, a test profile
 
 ## Try the production workflow entirely offline
 
+The [deliberate pilot resend guide](docs/DELIBERATE_PILOT_RESEND.md) covers the
+separately authorized duplicate-risk delivery for discount_15 row 2 and normal
+first sends for rows 3–4. The resend reuses the retained ticket/badge, records a
+new linked Message-ID, and preserves the original unknown outcome. Its additional
+scope is disabled; implementation does not send mail or change production history.
+
+The [official three-entry pilot guide](docs/OFFICIAL_PILOT.md) documents the only
+plan-bound live `batch-run` exception. Its authorization remains disabled with
+`EMAIL_ENABLED=false`; all other production batches and background work stay
+locked. Implementation and offline verification do not authorize a live preflight
+or activation.
+
 The [beginner batch command guide](docs/BATCH_COMMAND_GUIDE.md) covers IDs, source
 limits, all-source limits, every eligible entry and inclusive row ranges, with a
 separate phase-1 synthetic fixture and saved-plan execution examples. Live batch
@@ -179,10 +191,15 @@ The three sources retain their own source ID and price category. Tier is a separ
 | Source | Exact original Sheet label | Canonical tier |
 | --- | --- | --- |
 | `regular` | `Lite (₱199)` | `Lite` |
+| `regular` | `Pro (₱349)` | `Pro` |
+| `regular` | `Regular (₱289)` | `Regular` |
 | `discount_15` | `Lite (₱170)` | `Lite` |
 | `discount_15` | `Pro (₱297)` | `Pro` |
+| `discount_15` | `Regular (₱246)` | `Regular` |
+| `discount_10` | `Lite (₱180)` | `Lite` |
+| `discount_10` | `Regular (₱261)` | `Regular` |
 
-`discount_10` has no approved price-suffixed aliases. Matching is exact: different
+Matching is exact: different
 case, whitespace, price, source or wording is not accepted. The shared resolver
 is in `event_checkin/tiers.py`; there is no generic price-suffix stripping or
 source-category-to-tier inference. Unknown labels continue to require review.
@@ -194,6 +211,12 @@ bind the original raw label, so editing it invalidates an existing selection eve
 if the edited label would map to the same tier. Aliases cannot bypass any staff
 approval, duplicate conflict, cancellation, recipient-change or delivery-review
 rule. Their local implementation does not enable live processing.
+
+Recognizing an approved label is not proof of payment. All four staff approvals
+remain mandatory. Alias updates do not rewrite issued identities, frozen ticket
+details, saved plans, journals or delivery history. `EMAIL_ENABLED=false` and
+general live execution remain locked; a live preview or activation requires a
+separate authorized step.
 
 Every issuance, retry and resend requires **all four** current staff approvals:
 

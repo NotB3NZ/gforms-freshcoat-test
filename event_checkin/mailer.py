@@ -14,10 +14,11 @@ class EmailAmbiguous(RuntimeError):
 
 
 class SMTPMailer:
-    def __init__(self, settings, before_submit=None, diagnostic_sink=None):
+    def __init__(self, settings, before_submit=None, diagnostic_sink=None, on_accept=None):
         self.settings = settings
         self.before_submit = before_submit
         self.diagnostic_sink = diagnostic_sink
+        self.on_accept = on_accept
 
     def _diagnose(self, stage, error=None):
         if self.diagnostic_sink:
@@ -113,6 +114,13 @@ class SMTPMailer:
             self._diagnose("single_entry_smtp_submit", exc)
             raise EmailAmbiguous("SMTP result is uncertain; check Sent/provider logs before resolving.") from None
         else:
+            # This is delivery state, not optional diagnostics. Failure must remain
+            # uncertain to the caller; never report acceptance without its receipt.
+            if self.on_accept:
+                try:
+                    self.on_accept()
+                except Exception:
+                    raise EmailAmbiguous("SMTP accepted but durable acceptance recording failed; review required.") from None
             self._diagnose("single_entry_smtp_accepted")
         finally:
             # A QUIT failure after a successful DATA response must not misclassify delivery.

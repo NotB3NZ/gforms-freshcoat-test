@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "enabled": false,
+  "event_id": "aws-scd-mindanao-2026",
+  "plan_sha256": "1a7f01a7e49542ff82a5c1d2f036b6b97d8f430ac912819826ca6fff757094a9",
+  "entry_sha256": [
+    "f70eb1e516ffe6185b6142a1ea09b49b0c381ffe4693e3ba6dcca77b328ed616",
+    "049ae719b97ff31bfd3b600a3631eb49ae348a420f412f546b691f8616a90e5e",
+    "a745f80dc96b48b1c7fa21c1a784f331cd6a4a39ab005188cce407c3b218c45c"
+  ],
+  "sender": "awscc.upmindanao@gmail.com",
+  "template_sha256": "7e3c7247d68dd490d2987ae616d40cf344805a38d6a36023a9176d97327830d4",
+  "manifest_sha256": "9e5a84057df8622cdb6b6a06b4cbedb4d36ab320b58a633183daffa56a6934cc",
+  "headers_sha256": "29117447b67c09ad3b11c84913715cf5d8680ad359a2794c5b2eed4517271d8d"
+}

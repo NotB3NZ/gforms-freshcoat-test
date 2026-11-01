@@ -16,6 +16,11 @@ APPROVED = (
     ('regular', 'Lite (₱199)', 'Lite'),
     ('discount_15', 'Lite (₱170)', 'Lite'),
     ('discount_15', 'Pro (₱297)', 'Pro'),
+    ('regular', 'Pro (₱349)', 'Pro'),
+    ('regular', 'Regular (₱289)', 'Regular'),
+    ('discount_15', 'Regular (₱246)', 'Regular'),
+    ('discount_10', 'Lite (₱180)', 'Lite'),
+    ('discount_10', 'Regular (₱261)', 'Regular'),
 )
 CATEGORIES = {'regular': 'regular', 'discount_15': '15_percent_discount', 'discount_10': '10_percent_discount'}
 
@@ -47,7 +52,7 @@ class TierAliasTests(unittest.TestCase):
         self.assertFalse(self.s.generated.exists(), 'Policy tests must not render cards.')
         self.temp.cleanup()
 
-    def test_exactly_three_approved_source_specific_aliases(self):
+    def test_exactly_eight_approved_source_specific_aliases(self):
         actual = {(source, label, tier) for source, aliases in APPROVED_TIER_ALIASES.items() for label, tier in aliases.items()}
         self.assertEqual(actual, set(APPROVED))
         for source, label, tier in APPROVED:
@@ -67,6 +72,25 @@ class TierAliasTests(unittest.TestCase):
                 self.assertEqual(sheet.data['sources'][source][0], before)
                 self.assertFalse(row.get('participant_id'))
                 self.assertFalse(row.get('ticket_token'))
+
+    def test_every_alias_is_rejected_in_each_other_source(self):
+        for (approved_source, label, _), source in itertools.product(APPROVED, CATEGORIES):
+            if source == approved_source:
+                continue
+            with self.subTest(source=source, label=label):
+                self.assertIsNone(resolve_tier(source, label))
+                report, _ = preview(self.s, sheet_for(registration(source, label)), all_sources=True)
+                self.assertFalse(report[0]['in_batch'])
+                self.assertIn('unknown raw tier', str(report[0]['blocking_reasons']))
+
+    def test_alias_case_spacing_currency_and_price_variants_are_not_inferred(self):
+        for source, label, _ in APPROVED:
+            for variant in (label.lower(), ' ' + label, label + ' ', label.replace(' (', '('),
+                            label.replace('₱', 'PHP '), label.replace(')', '.00)'),
+                            label.replace('₱', '₱9')):
+                with self.subTest(source=source, label=variant):
+                    self.assertIsNone(resolve_tier(source, variant))
+                    self.assertFalse(valid_details(registration(source, variant)))
 
     def test_existing_canonical_tiers_remain_exact_and_supported(self):
         for source, tier in itertools.product(CATEGORIES, TIERS):
@@ -142,6 +166,31 @@ class TierAliasTests(unittest.TestCase):
                     row.data[key] = True
                 self.assertEqual(row.data, before)
 
+    def test_aliases_preserve_sent_exclusions_cancellation_and_frozen_identities(self):
+        for source, label, tier in APPROVED:
+            row = registration(source, label, record_id='R-existing-synthetic', participant_id='P-existing-synthetic',
+                               ticket_token='x' * 43, ticket_tier=tier, normalized_email='synthetic@example.test',
+                               ticket_name='Synthetic Example', source_id=source, price_category=CATEGORIES[source],
+                               ticket_status='ACTIVE', state='SENT', email_status='SENT',
+                               message_id='existing-message', email_attempts=1, email_sent_at='2026-10-01T00:00:00Z')
+            for changes, expected in (
+                ({}, 'already sent; explicit resend required'),
+                ({'state': 'CANCELLED'}, 'cancelled or unknown ticket status'),
+                ({'ticket_status': 'CANCELLED'}, 'cancelled or unknown ticket status'),
+                ({'ticket_status': 'UNKNOWN'}, 'cancelled or unknown ticket status'),
+                ({'ticket_tier': next(t for t in TIERS if t != tier)},
+                 'issued recipient/name/tier/source changed; staff review required'),
+            ):
+                with self.subTest(source=source, label=label, changes=changes):
+                    candidate = Row(row.number, {**deepcopy(row.data), **changes}, source)
+                    sheet = sheet_for(candidate)
+                    before = deepcopy(sheet.data)
+                    report, plan = preview(self.s, sheet, all_sources=True)
+                    self.assertFalse(report[0]['in_batch'])
+                    self.assertIn(expected, report[0]['blocking_reasons'])
+                    self.assertEqual(plan['entries'], [])
+                    self.assertEqual(sheet.data, before)
+
     def test_conflicting_approved_alias_tiers_still_require_duplicate_review(self):
         sheet = sheet_for(registration('discount_15', 'Lite (₱170)'), registration('discount_15', 'Pro (₱297)'))
         before = deepcopy(sheet.data)
@@ -163,16 +212,33 @@ class TierAliasTests(unittest.TestCase):
         self.assertTrue(all(not r.get('participant_id') and not r.get('ticket_token') for r in sheet.rows()))
 
     def test_raw_value_changes_invalidate_plan_even_when_mapped_tier_is_same(self):
-        row = registration('regular', 'Lite (₱199)')
-        sheet = sheet_for(row)
-        _, plan = preview(self.s, sheet, all_sources=True)
-        sheet.data['sources']['regular'][0]['tier'] = 'Lite'
-        changed = sheet.rows()[0]
-        self.assertEqual(details(row), details(changed))
-        self.assertNotEqual(fingerprint(row), fingerprint(changed))
-        processor = BatchProcessor(self.s, sheet, None, None)
-        with self.assertRaises(SheetIntegrityError):
-            processor.locate(sheet.rows(), plan['entries'][0], 'R-not-assigned')
+        for source, label, tier in APPROVED:
+            with self.subTest(source=source, label=label):
+                row = registration(source, label)
+                sheet = sheet_for(row)
+                _, plan = preview(self.s, sheet, all_sources=True)
+                original_plan = deepcopy(plan)
+                sheet.data['sources'][source][0]['tier'] = tier
+                changed = sheet.rows()[0]
+                self.assertEqual(details(row), details(changed))
+                self.assertNotEqual(fingerprint(row), fingerprint(changed))
+                processor = BatchProcessor(self.s, sheet, None, None)
+                with self.assertRaises(SheetIntegrityError):
+                    processor.locate(sheet.rows(), plan['entries'][0], 'R-not-assigned')
+                self.assertEqual(plan, original_plan)
+
+    def test_inspection_recognizes_every_approved_alias_without_mutating_inputs(self):
+        for source, label, tier in APPROVED:
+            with self.subTest(source=source, label=label):
+                data = {key: [] for key in CATEGORIES}
+                data[source] = [registration(source, label, confirmation=False).data]
+                before = deepcopy(data)
+                report = aggregate(data)['sources'][source]
+                self.assertEqual(report['tier_labels'][0]['label'], label)
+                self.assertEqual(report['tier_labels'][0]['mapped_tier'], tier)
+                self.assertTrue(report['tier_labels'][0]['recognized_by_current_processor'])
+                self.assertEqual(report['controlled_test_candidates_with_approved_tier'], 0)
+                self.assertEqual(data, before)
 
     def test_inspection_shares_exact_mapping_without_guessing_other_prices(self):
         data = {'regular': [registration('regular', 'Lite (₱199)', confirmation=False).data],

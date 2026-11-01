@@ -228,7 +228,7 @@ class HeaderInitTests(unittest.TestCase):
 
     def test_transport_only_reads_metadata_and_formula_row_one_and_exact_atomic_write(self):
         entry = self.plan['sources'][0]
-        with patch('gspread.service_account') as auth, patch('event_checkin.header_init.time.sleep'):
+        with patch('gspread.service_account') as auth:
             http = auth.return_value.http_client
             http.fetch_sheet_metadata.return_value = {'spreadsheetId': entry['source']['spreadsheet_id'], 'sheets': [
                 {'properties': {'sheetId': entry['source']['tab_id'], 'title': entry['source']['tab_name'], 'gridProperties': {'columnCount': 27}}}]}

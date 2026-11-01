@@ -5,6 +5,11 @@ local journals and local cards. They do not access Google, authenticate with SMT
 send email, enable flags or touch real registration history. Keep
 `EMAIL_ENABLED=false`. Run from the project directory with Bun/FreshCoat installed.
 
+The separately implemented [official three-entry pilot](OFFICIAL_PILOT.md) is the
+only scoped live `batch-run` path. Its authorization remains disabled. That guide
+contains its exact future preflight, activation, execution, deactivation and
+recovery commands. It does not unlock the general batch commands below.
+
 ## Choose a scope and eligible-attempt limit
 
 | What to select | Flags |
@@ -202,8 +207,10 @@ saved waiting-row tracking work. Their existing scope is not rewritten. The
 personal-sender and controlled-test paths retain their existing plan format.
 Legacy test operations and the organization inbox-test command remain separate.
 
-**Live `batch-run` and live resolution remain locked before any adapter opens or
-plan runs.** No live preflight, approval, credential setup, activation, SMTP send
+**General live `batch-run` and live resolution remain locked before any adapter opens or
+plan runs.** The exact pilot requires its separate disabled-by-default policy and
+explicit `--pilot`/`--authorize-pilot` controls. No live preflight, approval,
+credential setup, activation, SMTP send
 or production scheduler is part of phase 1. Source-priority fairness, operational
 batch sizes, audit review and future activation/recovery procedures remain later
 decisions; none enables live execution here.

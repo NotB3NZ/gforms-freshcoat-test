@@ -142,10 +142,12 @@ class IgnoreTests(unittest.TestCase):
             paths = [".env", ".env.local", "secrets/google-service-account.json", "generated/P-test/card.png",
                      "runtime/checkin.sqlite3", "runtime/issuance.sqlite3", "runtime/scanner-pending.json", ".venv/bin/python", ".venv312/bin/python",
                      ".env.test", ".env.production", "config/sources.production.json",
+                     "config/pilot-batch.approved.json",
+                     "config/pilot-resend.approved.json",
                      "runtime-production/issuance.sqlite3", "generated-production/P-test/card.png"]
             result = subprocess.run(["git", "-C", str(tmp), "check-ignore", "--stdin"], input="\n".join(paths) + "\n",
                                     text=True, capture_output=True, check=True)
             self.assertEqual(set(result.stdout.splitlines()), set(paths))
             public = subprocess.run(["git", "-C", str(tmp), "check-ignore", ".env.example", ".env.test.example", ".env.production.example",
-                                     "config/sources.production.example.json", "README.md"], capture_output=True)
+                                     "config/sources.production.example.json", "config/pilot-batch.approved.example.json", "README.md"], capture_output=True)
             self.assertEqual(public.returncode, 1)

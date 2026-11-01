@@ -5,13 +5,13 @@ uses one atomic batch with only a necessary column-count increase and exact head
 userEnteredValue updates. Other cell fields (formatting, validation, notes) survive.
 """
 import json
-import time
 from pathlib import Path
 
 from .config import ConfigurationError, production_sources
 from .locking import file_lock
 from .production_sheets import PRODUCTION_METADATA, ProductionTable
 from .sheets import SheetIntegrityError
+from .google_reads import pace_http, shared_scheduler
 
 EVENT_ID = "aws-scd-mindanao-2026"
 APPROVED_RANGES = {"regular": (23, "X1:AU1"), "discount_15": (21, "V1:AS1"), "discount_10": (21, "V1:AS1")}
@@ -94,21 +94,27 @@ def approved_requests(entry, column_count):
 
 class HeaderTransport:
     """Authentication is used only here, with no participant adapter or SMTP instance."""
-    def __init__(self, settings, plan, apply=False):
+    def __init__(self, settings, plan, apply=False, read_scheduler=None):
         import gspread
         self.plan, self.apply = plan, apply
         scope = "https://www.googleapis.com/auth/spreadsheets" + ("" if apply else ".readonly")
         client = gspread.service_account(filename=str(settings.service_account), scopes=[scope])
         client.set_timeout((10, 30))
-        self.http = client.http_client
-        self.last_request = 0.0
+        self.read_scheduler = read_scheduler or shared_scheduler(settings)
+        self.http = pace_http(client.http_client, self.read_scheduler)
         self.reads = self.writes = 0
 
     def pace(self):
-        delay = 1.1 - (time.monotonic() - self.last_request)
-        if delay > 0:
-            time.sleep(delay)
-        self.last_request = time.monotonic()
+        # Compatibility for existing read callers. Actual HTTP GETs share the
+        # scheduler, including retries, instead of maintaining a second clock.
+        pass
+
+    def read_reviewed(self, entry, *, first=2, last=None, data=True):
+        self.check_entry(entry)
+        from .reviewed_sheets import read_source
+        result = read_source(self.http, entry, first=first, last=last, data=data)
+        self.reads += 1
+        return result
 
     def check_entry(self, entry):
         if entry not in self.plan["sources"]:

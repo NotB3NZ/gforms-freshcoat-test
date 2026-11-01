@@ -340,6 +340,8 @@ def private_json(path, payload):
 
 
 class BatchProcessor:
+    journal_class = BatchJournal
+
     def __init__(self, settings, sheet, renderer, mailer, persist=None):
         self.s, self.sheet, self.renderer, self.mailer = settings, sheet, renderer, mailer
         self.persist = persist or (lambda: None)
@@ -402,7 +404,7 @@ class BatchProcessor:
             return []  # Empty snapshots create no journals, claims, tracking or render artifacts.
         outcomes = []
         with file_lock(self.s.runtime / "worker.lock", blocking=False), file_lock(self.s.runtime / "sheets.lock"):
-            self.journal = BatchJournal(self.s)
+            self.journal = self.journal_class(self.s)
             self.journal.bind(plan)
             # Preflight every selected locator and ALL source access before any writes.
             actions = [self.journal.action(plan, e) for e in entries]

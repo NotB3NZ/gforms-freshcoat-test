@@ -689,7 +689,7 @@ class ProductionAdapterTests(unittest.TestCase):
     def test_missing_source_access_aborts_constructor_without_reading_rows(self):
         s = Settings(profile="production", sources_file=ROOT / "config/sources.production.example.json")
         with patch("event_checkin.production_sheets.production_sources", return_value=self.sources), \
-                patch("gspread.service_account") as auth, patch("event_checkin.production_sheets.time.sleep"):
+                patch("gspread.service_account") as auth:
             client = auth.return_value
             book = unittest.mock.Mock()
             book.get_worksheet_by_id.return_value.title = self.sources[0]["tab_name"]
