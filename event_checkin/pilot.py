@@ -23,6 +23,7 @@ from .production import (BatchJournal, BatchProcessor, details, digest, fingerpr
                          private_json, reasons, recipient)
 from .single_send import WRITE_FIELDS, checksum, require, safe_blockers
 from .google_reads import pace_http
+from .delivery_evidence import DeliveryEvidence
 
 PLAN_RELATIVE = 'runtime-production/batch-reviews/official-pilot-20261101-134414.json'
 PLAN_SHA256 = '1a7f01a7e49542ff82a5c1d2f036b6b97d8f430ac912819826ca6fff757094a9'
@@ -64,6 +65,11 @@ def load_bound(settings, path):
             == ('front', 'displayName', 'ticketTier', 378, 228, 444),
             'Pilot authorization, reviewed schema or badge configuration changed.')
     return plan, policy
+
+
+def load_binding(settings, path, authorization=None):
+    """The same execution engine supports legacy and reusable plan policies."""
+    return authorization.load_bound(settings, path) if authorization else load_bound(settings, path)
 
 
 def existing(settings, plan, entry):
@@ -123,6 +129,18 @@ def classify_recovery(settings, plan, entry, rows):
     Both diagnosis and execution use this classification and the same eligibility
     action; receipt and Sheet uncertainty always outrank ordinary resume/retry.
     """
+    if getattr(settings, 'authorization', None):
+        matches = [r for r in rows if (r.source_id, r.number) == (entry['source'], entry['snapshot_row'])]
+        require(len(matches) == 1 and fingerprint(matches[0]) == entry['fingerprint'],
+                'Selected registration changed or moved; no replacement is permitted.')
+        delivery = DeliveryEvidence(settings).inspect(matches[0])
+        require(not any('binding' in b for b in delivery.blockers), 'Delivery receipt binding requires staff review.')
+        own_action, own_receipt, _ = existing(settings, plan, entry)
+        if delivery.accepted and not (own_receipt and own_receipt[0] == 'ACCEPTED'):
+            return matches[0], own_action, own_receipt, {
+                'registration_phase': 'ISSUED', 'eligibility_action': 'send', 'retry_required': False,
+                'recovery': 'ALREADY_SENT', 'identity_reserved': False, 'issued': True,
+                'blockers': ['already sent; explicit resend required']}
     row, action, receipt = bound_row(settings, plan, entry, rows)
     claim = existing(settings, plan, entry)[2]
     issued = bool(row.get('participant_id') and row.get('ticket_token'))
@@ -211,16 +229,18 @@ class PilotReader(LiveTestSheet):
 
 class PilotSettings:
     """Only this batch's metadata writes/email are scoped; the global lock stays."""
-    def __init__(self, base, path, policy, mode='execute', reload_settings=None):
+    def __init__(self, base, path, policy, mode='execute', reload_settings=None, authorization=None):
         self.base, self.path, self.policy, self.mode = base, path, policy, mode
-        self.reload = reload_settings or (lambda: load_settings('production', base.root, pilot=True))
+        self.authorization = authorization
+        self.reload = reload_settings or (lambda: load_settings('production', base.root,
+            pilot=authorization is None, authorized_batch=authorization is not None))
 
     def __getattr__(self, key):
         return getattr(self.base, key)
 
     def current(self):
         current = self.reload()
-        _, policy = load_bound(current, self.path)
+        _, policy = load_binding(current, self.path, self.authorization)
         require(policy == self.policy, 'Pilot authorization changed during execution.')
         return current
 
@@ -263,7 +283,7 @@ class PilotSheet:
         self.require_write()
         entries = [e for e in self.plan['entries'] if (e['source'], e['snapshot_row']) == (row.source_id, row.number)]
         require(len(entries) == 1 and changes and set(changes) <= WRITE_FIELDS,
-                'Pilot may write only its three selected registrations and approved tracking fields.')
+                'Batch may write only its saved selected registrations and approved tracking fields.')
         read_for_update = getattr(self.reader, 'read_for_update', None)
         if callable(read_for_update):
             rows, snapshot = read_for_update(row.source_id, row.number)
@@ -354,6 +374,7 @@ class PilotJournal(BatchJournal):
 
 class PilotProcessor(BatchProcessor):
     journal_class = PilotJournal
+    reconciles_delivery_receipts = True
 
     def __init__(self, *args, plan, retry_target=None, first_sends_only=False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -392,6 +413,8 @@ class PilotProcessor(BatchProcessor):
             return 'outside explicit retry'
         rows = self.sheet.rows()
         row, _, receipt, status = classify_recovery(self.s, self.plan, entry, rows)
+        if status['recovery'] == 'ALREADY_SENT':
+            return 'already sent; external receipt retained'
         if receipt and receipt[0] == 'ACCEPTED':
             self.finish_accepted(row, entry, receipt)
             return 'sent'
@@ -448,8 +471,8 @@ def verify_ticket_message(settings, row, mailer, message, address, name, pid, ca
     require(message_signature(message) == message_signature(expected), 'Pilot MIME content differs from frozen ticket data.')
 
 
-def inspect_pilot(settings, path, *, reader=None):
-    plan, policy = load_bound(settings, path)
+def inspect_pilot(settings, path, *, reader=None, authorization=None):
+    plan, policy = load_binding(settings, path, authorization)
     inspect_template(settings)
     google_sans_files()
     reader = reader or PilotReader(settings)
@@ -457,27 +480,30 @@ def inspect_pilot(settings, path, *, reader=None):
     rows = reader.rows()
     entries = []
     for entry in plan['entries']:
-        row, action, receipt, status = classify_recovery(settings, plan, entry, rows)
+        scoped = PilotSettings(settings, path, policy, mode='inspect', authorization=authorization)
+        row, action, receipt, status = classify_recovery(scoped, plan, entry, rows)
         blocked = status['blockers'] + (['failed job requires explicit retry'] if status['retry_required'] else [])
         entries.append({'target': entry['target'], 'completed': bool(action and action[2]),
                         'delivery': receipt[0] if receipt else 'NO_INTENT',
                         **status,
                         'blockers': safe_blockers(blocked)})
-    return {'plan_sha256': PLAN_SHA256, 'selected_count': 3, 'sources_revalidated': True,
+    return {'plan_sha256': checksum(path), 'selected_count': len(plan['entries']), 'sources_revalidated': True,
             'authorization_enabled': policy['enabled'], 'email_enabled': settings.email_enabled,
             'smtp_connected': False, 'participant_writes': 0, 'entries': entries,
             'smtp_acceptance_is_inbox_confirmation': False, 'general_production': 'LOCKED'}
 
 
 def execute(settings, path, *, retry_target=None, first_sends_only=False, reader=None, renderer=None, write_transport=None,
-            reload_settings=None, mailer_factory=SMTPMailer):
-    plan, policy = load_bound(settings, path)
-    scoped = PilotSettings(settings, path, policy, reload_settings=reload_settings)
+            reload_settings=None, mailer_factory=SMTPMailer, authorization=None):
+    plan, policy = load_binding(settings, path, authorization)
+    scoped = PilotSettings(settings, path, policy, reload_settings=reload_settings, authorization=authorization)
     scoped.require_write()  # BEFORE Google, journal creation, issuance or rendering.
     require(not first_sends_only or not retry_target, 'Remaining first sends cannot be combined with a targeted retry.')
     require(not retry_target or retry_target in [e['target'] for e in plan['entries']], 'Retry must name one original pilot target.')
     reader = reader or PilotReader(settings)
-    report = inspect_pilot(settings, path, reader=reader)
+    report = inspect_pilot(settings, path, reader=reader, authorization=authorization)
+    require(not any(e['recovery'] == 'ALREADY_SENT' for e in report['entries']),
+            'Saved plan includes an already accepted delivery from another path; create a fresh preview.')
     require(all(not e['blockers'] for e in report['entries'] if not e['issued']),
             'Eligibility or unverified initialization history blocks the selected pilot registrations.')
     if retry_target:
@@ -487,12 +513,16 @@ def execute(settings, path, *, retry_target=None, first_sends_only=False, reader
     require(sheet.live is True and sheet.dataset == plan['dataset'], 'Pilot adapter differs from the saved plan.')
     processor = PilotProcessor(scoped, sheet, renderer or CardRenderer(settings), None, plan=plan,
                                retry_target=retry_target, first_sends_only=first_sends_only)
+    if authorization:
+        processor.journal_class = authorization.journal_class
 
     def before_submit(message, address, name, pid, card_path, mid, tier):
         scoped.require_email()
         entry = processor.active
         rows = sheet.rows()
         row, action, receipt = bound_row(scoped, plan, entry, rows)
+        delivery = DeliveryEvidence(scoped).inspect(row, own_intent=(plan['plan_id'], entry['target']))
+        require(not delivery.accepted and not delivery.blockers, 'Existing delivery evidence blocks SMTP submission.')
         require(action and mid == action[1] and receipt and receipt[0] == 'INTENT'
                 and (row.get('state'), row.get('email_status'), row.get('message_id')) == ('PROCESSING', 'SENDING', mid),
                 'Persisted pilot send intent was not confirmed.')
@@ -505,6 +535,8 @@ def execute(settings, path, *, retry_target=None, first_sends_only=False, reader
         # cancellation, duplicates and delivery history immediately before DATA.
         fresh_rows = sheet.rows()
         fresh, _, fresh_receipt = bound_row(scoped, plan, entry, fresh_rows)
+        delivery = DeliveryEvidence(scoped).inspect(fresh, own_intent=(plan['plan_id'], entry['target']))
+        require(not delivery.accepted and not delivery.blockers, 'Delivery evidence changed before SMTP submission.')
         require(fresh.data == row.data and fresh_receipt == receipt, 'Pilot changed during badge/message verification.')
         require(not [b for b in reasons(fresh, fresh_rows, settings.event_id, 'retry')
                      if b != 'uncertain delivery requires staff review'],
@@ -516,13 +548,14 @@ def execute(settings, path, *, retry_target=None, first_sends_only=False, reader
     return processor.execute(plan)
 
 
-def resolve(settings, path, target, outcome, evidence, *, reader=None, write_transport=None, reload_settings=None):
-    plan, policy = load_bound(settings, path)
+def resolve(settings, path, target, outcome, evidence, *, reader=None, write_transport=None, reload_settings=None,
+            authorization=None):
+    plan, policy = load_binding(settings, path, authorization)
     require(outcome in ('accepted', 'not-sent') and isinstance(evidence, str) and 0 < len(evidence.strip()) <= 256,
             'Explicit provider review and a private evidence reference are required.')
     entries = [e for e in plan['entries'] if e['target'] == target]
     require(len(entries) == 1, 'Resolve only one original pilot target.')
-    scoped = PilotSettings(settings, path, policy, mode='resolve', reload_settings=reload_settings)
+    scoped = PilotSettings(settings, path, policy, mode='resolve', reload_settings=reload_settings, authorization=authorization)
     scoped.require_write()
     reader = reader or PilotReader(settings)
     require(reader.live is True and reader.dataset == plan['dataset'], 'Pilot recovery dataset differs.')
@@ -532,7 +565,7 @@ def resolve(settings, path, target, outcome, evidence, *, reader=None, write_tra
         rows = sheet.rows()
         row, action, receipt = bound_row(scoped, plan, entry, rows)
         require(action and receipt and row.get('ticket_token'), 'Only an existing pilot delivery intent can be resolved.')
-        journal = PilotJournal(scoped)
+        journal = authorization.journal_class(scoped) if authorization else PilotJournal(scoped)
         processor = PilotProcessor(scoped, sheet, None, None, plan=plan)
         processor.journal, processor.active = journal, entry
         if outcome == 'accepted':

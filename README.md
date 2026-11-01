@@ -2,7 +2,7 @@
 
 This project connects Google Form response Sheets to personalized FreshCoat cards, opaque QR tickets, email delivery, and a staff check-in server. The original single-source **test** workflow is preserved. The new **production** service handles three sources with four mandatory staff approvals and finite, exact-selection batches.
 
-**Current boundary:** general production batches and the production worker remain locked. The [personal-sender single-entry path](docs/SINGLE_ENTRY_SEND.md) is fixed to regular row 2 and remains disabled until explicit private activation and a deliberate send command. The separate [organization inbox test](docs/ORGANIZATION_INBOX_TEST.md) uses fictional data and permanently invalid badges without reading Sheets. `EMAIL_ENABLED=false` always prohibits SMTP sending. The separately approved `production-init-headers` command remains limited to reviewed row-one ranges. `.env.production` stays email-disabled during implementation and preflight. Do not replace these locks with the old single-source worker.
+**Current boundary:** unscoped production batches and the production worker remain locked. [Reusable production plans](docs/BATCH_COMMAND_GUIDE.md#reusable-production-plan-prepare-and-review) use `batch-run --authorized-plan` with a private policy bound to the exact reviewed selection, configuration/assets and organization sender. Policies are prepared disabled; live execution also requires `--authorize-plan` and enabled email. The [legacy pilot](docs/OFFICIAL_PILOT.md), [personal-sender single-entry path](docs/SINGLE_ENTRY_SEND.md), and [organization inbox test](docs/ORGANIZATION_INBOX_TEST.md) retain their separate scopes. `EMAIL_ENABLED=false` always prohibits SMTP sending. Header initialization remains limited to reviewed row-one ranges. Email and authorization gates stay disabled during implementation and read-only preflight; the old worker does not inherit any plan authority.
 
 ## Separate test and production profiles
 
@@ -36,13 +36,15 @@ first sends for rows 3–4. The resend reuses the retained ticket/badge, records
 new linked Message-ID, and preserves the original unknown outcome. Its additional
 scope is disabled; implementation does not send mail or change production history.
 
-The [official three-entry pilot guide](docs/OFFICIAL_PILOT.md) documents the only
-plan-bound live `batch-run` exception. Its authorization remains disabled with
+The [official three-entry pilot guide](docs/OFFICIAL_PILOT.md) documents the legacy
+three-entry live `batch-run` exception. Its authorization remains disabled with
 `EMAIL_ENABLED=false`; all other production batches and background work stay
 locked. Implementation and offline verification do not authorize a live preflight
 or activation.
 
-The [beginner batch command guide](docs/BATCH_COMMAND_GUIDE.md) covers IDs, source
+The [beginner batch command guide](docs/BATCH_COMMAND_GUIDE.md) covers reusable
+plan preparation/preflight, explicit activation, execution, deactivation and
+recovery, as well as IDs, source
 limits, all-source limits, every eligible entry and inclusive row ranges, with a
 separate phase-1 synthetic fixture and saved-plan execution examples. Live batch
 execution remains locked.

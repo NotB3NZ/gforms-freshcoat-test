@@ -68,18 +68,20 @@ def register(commands):
     inspect.add_argument("--regenerate", action="store_true", help="Regenerate selected cards with the same identities and issued tiers")
     inspect.add_argument("--details", action="store_true", help="Include private participant lists alongside the per-source summary")
     inspect.add_argument("--plan-out", type=Path, help="Private JSON within this profile's runtime directory")
-    run = commands.add_parser("batch-run", help="Execute a saved fixture or the separately authorized exact three-entry pilot")
+    run = commands.add_parser("batch-run", help="Execute a saved fixture or an explicitly authorized exact production plan")
     run.add_argument("--plan", type=Path, required=True)
     run.add_argument("--fixture", type=Path, help="Synthetic local fixture; live execution stays locked")
     run.add_argument("--state-out", type=Path, help="Private checkpoint JSON within runtime-production/offline")
-    run.add_argument("--pilot", action="store_true", help="Only the pinned official three-entry pilot; all other live batches stay locked")
+    run.add_argument("--pilot", action="store_true", help="Use the legacy pinned three-entry pilot policy and recovery controls")
+    run.add_argument("--authorized-plan", action="store_true", help="Use the private authorization bound to this exact saved production plan")
     operation = run.add_mutually_exclusive_group()
-    operation.add_argument("--preflight", action="store_true", help="Read-only pilot schema, eligibility and history checks")
-    operation.add_argument("--diagnose", action="store_true", help="Read-only pilot delivery diagnosis; never resumes")
-    operation.add_argument("--activate", action="store_true", help="Enable only this pilot authorization; does not enable email")
-    operation.add_argument("--deactivate", action="store_true", help="Disable only this pilot authorization; no account access")
-    operation.add_argument("--retry", metavar="TARGET", help="Explicit known-unsent retry of one original pilot target")
-    operation.add_argument("--resolve", metavar="TARGET", help="Record provider review for one original pilot target; no SMTP")
+    operation.add_argument("--prepare-authorization", action="store_true", help="Locally bind a disabled reusable plan policy; no account access")
+    operation.add_argument("--preflight", action="store_true", help="Read-only selected-plan schema, eligibility and history checks")
+    operation.add_argument("--diagnose", action="store_true", help="Read-only selected-plan delivery diagnosis; never resumes")
+    operation.add_argument("--activate", action="store_true", help="Enable only this plan authorization; does not enable email")
+    operation.add_argument("--deactivate", action="store_true", help="Disable only this plan authorization; no account access")
+    operation.add_argument("--retry", metavar="TARGET", help="Explicit known-unsent retry of one original selected target")
+    operation.add_argument("--resolve", metavar="TARGET", help="Record provider review for one original selected target; no SMTP")
     operation.add_argument("--remaining-first-sends", action="store_true", help="Resume only original pilot rows 3 and 4; retain row 2's unresolved history")
     operation.add_argument("--prepare-resend", metavar="TARGET", help="Prepare a disabled local authorization for the single deliberate row-2 resend")
     operation.add_argument("--resend-preflight", metavar="TARGET", help="Read-only checks of the separately bound deliberate resend")
@@ -93,6 +95,7 @@ def register(commands):
     run.add_argument("--outcome", choices=("accepted", "not-sent"), help="Provider-review outcome for --resolve")
     run.add_argument("--evidence", help="Required provider-review reference for --resolve; stored privately")
     run.add_argument("--authorize-pilot", action="store_true", help="Explicit authority for this exact plan only")
+    run.add_argument("--authorize-plan", action="store_true", help="Explicit authority for the exact reusable plan; policy and email must also be enabled")
     resolve = commands.add_parser("batch-resolve-email", help="Record a staff delivery-review outcome for exactly one ID")
     resolve.add_argument("identifier")
     resolve.add_argument("--outcome", required=True, choices=("sent", "retry"))
@@ -121,6 +124,13 @@ def run(settings, args):
     if not settings.event_id:
         raise ConfigurationError("Set a separate permanent production EVENT_ID locally before preparing batches.")
     if args.command == "batch-run":
+        if getattr(args, "authorized_plan", False):
+            if args.pilot or args.fixture or args.state_out:
+                raise ConfigurationError("Reusable production authorization cannot use pilot, fixture or checkpoint switches.")
+            from .authorized_batch import run_command
+            return run_command(settings, args)
+        if getattr(args, "prepare_authorization", False) or getattr(args, "authorize_plan", False):
+            raise ConfigurationError("Reusable plan controls require --authorized-plan.")
         pilot_options = ("preflight", "diagnose", "activate", "deactivate", "retry", "resolve", "outcome", "evidence", "authorize_pilot",
                          "remaining_first_sends", "prepare_resend", "resend_preflight", "activate_resend", "deactivate_resend",
                          "resend", "resend_retry", "resend_diagnose", "resend_resolve", "acknowledge_duplicate")

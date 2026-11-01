@@ -1,14 +1,195 @@
-# Production batch commands — phase 1, offline only
+# Production batch commands
 
-Live batch execution is **LOCKED**. These examples use a separate fictional fixture,
-local journals and local cards. They do not access Google, authenticate with SMTP,
-send email, enable flags or touch real registration history. Keep
-`EMAIL_ENABLED=false`. Run from the project directory with Bun/FreshCoat installed.
+Production processing is **locked except for an explicitly authorized saved plan**.
+Email and authorizations are currently disabled. The reusable commands below are
+for a future authorized operating session. Preparation is local only; preflight
+and diagnosis read Google, while execution/recovery can write the selected rows.
+No command below runs in the background or substitutes another registration.
 
-The separately implemented [official three-entry pilot](OFFICIAL_PILOT.md) is the
-only scoped live `batch-run` path. Its authorization remains disabled. That guide
-contains its exact future preflight, activation, execution, deactivation and
-recovery commands. It does not unlock the general batch commands below.
+The original [three-entry pilot](OFFICIAL_PILOT.md), its history, personal-sender
+commands and separately authorized [deliberate resend](DELIBERATE_PILOT_RESEND.md)
+retain their legacy controls. Do not combine `--pilot` or resend controls with
+`--authorized-plan`. Fixture examples later in this guide are entirely offline.
+
+## Reusable production plan: prepare and review
+
+Run from the project directory. The first prepared plan is the unchanged reviewed
+selection **discount_15 rows 5–9**:
+
+```sh
+cd /Users/benzdecastro/Documents/Projects/test_gforms/event-checkin
+PLAN='runtime-production/batch-reviews/next-five-after-resend-fix.json'
+```
+
+Its SHA-256 is
+`a8137eecd44fcdf185ad672bdfc5182e8f8215f4eeece10982bacf148b580caa`.
+The private authorization is
+`config/batch-authorizations/0e66b621-bfa0-43e5-b134-22ba2166feb3.json`,
+prepared with `enabled=false`. Existing plans and authorization bindings are never
+overwritten to expand a selection. For a later reviewed plan, set `PLAN` to its
+new saved filename and prepare a separate disabled policy:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --prepare-authorization
+```
+
+Preparation requires `EMAIL_ENABLED=false` and performs no Google/SMTP access,
+identity allocation, participant updates or card rendering. It binds the exact
+plan bytes/path/ID, event, entries, tracking scope, organization sender, reviewed
+source/header configuration, badge geometry/template, fonts, email HTML,
+transport configuration and runtime/card locations. Credentials are neither
+copied into the policy nor printed. Only the policy file is created (0600 in a
+private, Git-ignored directory). Repeating preparation verifies the same disabled
+policy; it does not reset an enabled or changed policy.
+
+The next read-only preflight is:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --preflight
+```
+
+Keep both email and this policy disabled. Preflight validates all three current
+source schemas, the five exact saved registrations, fresh approvals, duplicates,
+cancellation, frozen identity and existing acceptance history. It never creates
+journals, identities, cards or Sheet updates, and never constructs SMTP. Review
+every reported blocker. `ALREADY_SENT` means another verified path already has
+acceptance; the stale selection cannot execute. Preserve it and create a fresh
+normal preview rather than changing/resetting its rows or receipts.
+
+The shared reader paces all Sheets GETs by credential at 1.25 seconds, including
+gspread initialization requests. Only retryable reads receive bounded backoff:
+at most five attempts, exponential delays plus jitter, and a 120-second per-read
+waiting budget. Waiting invalidates earlier snapshots and refreshes schema,
+approval and duplicate checks. Exhaustion stops the operation. Writes and SMTP
+submission are never automatically retried. The detailed quota behavior in the
+[pilot guide](OFFICIAL_PILOT.md#read-quota-handling) applies to reusable plans too.
+
+## Explicit authorization and run — future operating session only
+
+After reviewing preflight, enable only this policy, with email still disabled:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --activate --authorize-plan
+```
+
+Activation makes no Google/SMTP connection and does not enable email. In a
+separately authorized sending session, edit `.env.production` privately:
+
+```sh
+nano .env.production
+```
+
+Set `EMAIL_ENABLED=true` only when ready to send. Keep the existing organization
+SMTP credentials private. Both configured sender fields must match
+`awscc.upmindanao@gmail.com`. Execute the exact saved plan explicitly:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --authorize-plan
+```
+
+All three gates are necessary: the explicit command flag, this exact enabled
+policy, and enabled email. `EMAIL_ENABLED=false` blocks SMTP even if the other
+gates are present. The policy is checked throughout execution and again after
+authentication. Changing/revoking it or changing bound configuration/assets
+stops further processing. Other plans, workers and general production commands
+gain no authority from this policy or email setting.
+
+Only the saved selected entries receive approved app metadata writes. All-source
+reads are for current schema/eligibility/duplicate safeguards, not discovery of
+replacement recipients. Stable record IDs, ticket reservations and Message-IDs
+are retained across interruptions. Badges, decoded QR/name/tier pixels and the
+frozen HTML/plain-text/inline-image/attachment MIME are verified before DATA.
+Acceptance is committed durably before final tracking writes. SMTP acceptance is
+not proof of inbox delivery.
+
+## Deactivate and diagnose
+
+When work stops, disable this plan locally, then return email to false:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --deactivate
+nano .env.production
+```
+
+Set `EMAIL_ENABLED=false`. Deactivation remains available after plan/config/asset
+drift and changes only the policy's enabled flag. It clears no ticket, journal,
+receipt, Message-ID or delivery history.
+
+With both gates disabled, diagnose the unchanged plan read-only:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --diagnose
+```
+
+Diagnosis opens the existing journal read-only and prints bounded original
+targets/statuses, not names, addresses, passwords or ticket tokens. It allocates
+nothing and sends nothing. Reusable scope bindings and delivery receipts share
+the established production batch journal; legacy pilot/resend history is kept.
+
+## Recover the same plan without duplicate sends
+
+| Diagnosed outcome | Next action |
+| --- | --- |
+| Unstarted/reserved/verified initialization, no delivery intent | Resume the unchanged plan after review and activation. Reservations alone do not require a retry. |
+| Completed or durably accepted | Completed entries are skipped. Acceptance can reconcile tracking without submitting another message. |
+| Known-unsent/render failure | Activate, enable email, and explicitly retry only that original target. |
+| `INTENT` / `UNCERTAIN` | Stop. Review the original Message-ID in private provider logs; never automatically retry. |
+| Another path already accepted, or binding/history mismatch | Stop and review. Preserve both histories; normal plans cannot adopt/reset another operation's identity. |
+
+For a verified failed original row 5, after activation and enabled email:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --retry 'discount_15:row:5' --authorize-plan
+```
+
+Targeted retry leaves other unfinished entries untouched and reuses the same
+identity and Message-ID. `--retry` cannot release an uncertain submission.
+
+For an existing acceptance receipt, or provider-confirmed acceptance of an
+uncertain original attempt, first deactivate and disable email. Record the
+reviewed fact and reconcile tracking **without SMTP**:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --resolve 'discount_15:row:5' \
+  --outcome accepted --evidence 'REPLACE_WITH_PRIVATE_ACCEPTANCE_REFERENCE' \
+  --authorize-plan
+```
+
+Existing acceptance timestamps and later cancellations are preserved. Accepted
+deliveries cannot be downgraded or released for retry. Only when provider evidence
+confirms the uncertain submission was **not accepted**, with both gates disabled:
+
+```sh
+.venv/bin/python -m event_checkin --profile production batch-run \
+  --authorized-plan --plan "$PLAN" --resolve 'discount_15:row:5' \
+  --outcome not-sent --evidence 'REPLACE_WITH_PRIVATE_NON_ACCEPTANCE_REFERENCE' \
+  --authorize-plan
+```
+
+This sends nothing; subsequent sending still needs activation, enabled email and
+the explicit targeted retry command. Use rows 6–9 only when that is the diagnosed
+original target. Resume other eligible unfinished work with the original run
+command. Deactivate and disable email again afterward.
+
+Never delete journals, restore old rows, alter a saved plan/fingerprint, clear
+delivery fields or issue replacement identities to bypass recovery. In particular,
+row 2's original uncertain pilot attempt and successful linked resend remain
+separate; their acceptance is an exclusion from normal sending, not authority to
+rewrite the original uncertainty.
+
+## Offline fixture examples
+
+The remaining fixture examples use fictional data, separate local journals and
+synthetic cards. They never contact Google/SMTP, enable email or change production
+records. Keep `EMAIL_ENABLED=false`; install Bun/FreshCoat for fixture rendering.
 
 ## Choose a scope and eligible-attempt limit
 
@@ -111,7 +292,8 @@ each source in the requested scope:
 - `actual_registrations`: rows with any name, email, tier or stored app metadata.
 - `selected_eligible_registrations`: eligible attempts within the global limit.
 - `eligible_beyond_limit`: eligible registrations beyond that limit.
-- `already_sent_registrations`: rows with sent state or email status.
+- `already_sent_registrations`: rows with sent state/email status or verified
+  durable SMTP acceptance, including separately linked deliberate resends.
 - `blocked_registrations` and `blocked_by_reason`: registrations with blockers
   other than the already-sent exclusion, grouped by reason.
 - `empty_checkbox_only_rows_excluded`: rows with no name, email, tier or stored
@@ -195,6 +377,23 @@ The CLI may still save the explicitly requested offline checkpoint file.
 
 Normal sends exclude already-sent registrations, failed jobs requiring retry,
 uncertain delivery, cancellation, invalid details and approval/duplicate conflicts.
+Preview reads existing acceptance evidence without creating or changing journals.
+Pilot receipts bind the archived plan/action, event, registration and frozen
+ticket reservation. Deliberate resend receipts additionally verify their own
+Message-ID, original unresolved receipt, immutable authorization binding and
+acceptance event. Single-entry acceptance checkpoints must match their saved
+selection and unambiguous action/reservation. Missing, conflicting or ambiguous
+bindings block normal selection and execution for review.
+
+A verified linked resend counts as already sent even if the original row still
+shows a pre-send or uncertain status. This does not mark the original attempt
+accepted, complete it, update the row or replace either receipt. Normal execution
+rejects an unfinished saved selection that now has verified acceptance before
+creating batch actions, and checks evidence again at later processing gates.
+Existing saved plans stay unchanged for audit; generate a fresh preview after
+receipt eligibility changes. Explicit resend and recovery authorizations remain
+separate from normal sending; acceptance evidence never enables them.
+
 The four approvals and reviewed tier/header rules are unchanged. Failed jobs
 require a separate `--action retry` preview; deliberate resends require
 `--action resend`. Frozen issued details and Message-IDs remain protected.
@@ -207,10 +406,8 @@ saved waiting-row tracking work. Their existing scope is not rewritten. The
 personal-sender and controlled-test paths retain their existing plan format.
 Legacy test operations and the organization inbox-test command remain separate.
 
-**General live `batch-run` and live resolution remain locked before any adapter opens or
-plan runs.** The exact pilot requires its separate disabled-by-default policy and
-explicit `--pilot`/`--authorize-pilot` controls. No live preflight, approval,
-credential setup, activation, SMTP send
-or production scheduler is part of phase 1. Source-priority fairness, operational
-batch sizes, audit review and future activation/recovery procedures remain later
-decisions; none enables live execution here.
+**Unscoped live `batch-run`, live resolution and background workers remain locked.**
+Reusable production plans require the separate `--authorized-plan` controls above;
+the legacy pilot retains `--pilot`/`--authorize-pilot`. Fixture switches cannot be
+combined with either production scope. No live preflight, activation, sending or
+production scheduling was performed while implementing these commands.

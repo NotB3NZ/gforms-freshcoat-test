@@ -17,5 +17,6 @@ config/production-header-init.approved.json
 config/single-entry-send.approved.json
 config/pilot-batch.approved.json
 config/pilot-resend.approved.json
+config/batch-authorizations/
 runtime-production/
 generated-production/

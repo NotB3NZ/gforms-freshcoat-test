@@ -45,6 +45,8 @@ def main():
         s = load_settings(profile=args.profile, single_entry=args.command == "production-single-send",
                           inbox_test=args.command == "production-inbox-test",
                           pilot=args.command == "batch-run" and getattr(args, "pilot", False)
+                          and not getattr(args, "fixture", None),
+                          authorized_batch=args.command == "batch-run" and getattr(args, "authorized_plan", False)
                           and not getattr(args, "fixture", None))
         if s.profile == "production" and args.command not in ("profile-info", "check-config", "check-template", "preview") + production_cli.COMMANDS:
             s.require_operational()

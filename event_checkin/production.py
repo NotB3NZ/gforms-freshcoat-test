@@ -13,6 +13,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .config import private_directory
+from .delivery_evidence import Delivery, DeliveryEvidence
 from .locking import file_lock
 from .mailer import EmailNotSent
 from .production_sheets import APPROVAL_HEADERS, PRODUCTION_METADATA, validate_production_identities
@@ -130,7 +131,7 @@ def issued_identity(row):
                                         "ticket_name", "ticket_tier", "price_category", "source_id")])
 
 
-def reasons(row, rows, event_id, action="send"):
+def reasons(row, rows, event_id, action="send", *, delivery=None):
     blocked = []
     if is_test_token(row.get("ticket_token")):
         blocked.append("reserved controlled-test identity; cleanup/review required")
@@ -143,7 +144,7 @@ def reasons(row, rows, event_id, action="send"):
         blocked.append("review invalid name/email or unknown raw tier/price category")
     if row.get("ticket_status") not in ("", "ACTIVE") or row.get("state") == "CANCELLED":
         blocked.append("cancelled or unknown ticket status")
-    if row.get("email_status") in ("SENDING", "AMBIGUOUS") or row.get("state") == "EMAIL_REVIEW":
+    if (row.get("email_status") in ("SENDING", "AMBIGUOUS") or row.get("state") == "EMAIL_REVIEW") and not (delivery and delivery.accepted):
         blocked.append("uncertain delivery requires staff review")
     if row.get("ticket_token"):
         name, tier, price = details(row)
@@ -168,9 +169,13 @@ def reasons(row, rows, event_id, action="send"):
             blocked.append("conflicting approved registrations; staff review required")
         elif eligible and not same_row(row, eligible[0]):
             blocked.append("duplicate of approved canonical registration " + target(eligible[0]))
-    sent = row.get("email_status") == "SENT" or row.get("state") == "SENT"
+    if delivery:
+        blocked.extend(reason for reason in delivery.blockers if reason not in blocked)
+    sent = delivery.sent if delivery else row.get("email_status") == "SENT" or row.get("state") == "SENT"
     if action == "resend":
-        if not sent:
+        # A linked receipt excludes normal sending; it does not grant the old
+        # generic resend scope over an original unresolved attempt.
+        if row.get("email_status") != "SENT" and row.get("state") != "SENT":
             blocked.append("resend requires a sent registration")
     elif sent:
         blocked.append("already sent; explicit resend required")
@@ -225,11 +230,13 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
     if selection_version == 2:
         selected.sort(key=lambda row: (order.index(row.source_id), row.number))
     entries, report, excluded, count = [], [], [], 0
+    evidence = DeliveryEvidence(settings)
     for row in selected:
         if selection_version == 2 and not is_registration(row):
             excluded.append(row.source_id)
             continue
-        blocked = reasons(row, rows, settings.event_id, action)
+        delivery = evidence.inspect(row)
+        blocked = reasons(row, rows, settings.event_id, action, delivery=delivery)
         eligible = not blocked
         included = eligible and (limit == "all" or count < limit)
         if included:
@@ -239,7 +246,7 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
                    "tier": row.get("tier"), "mapped_tier": details(row)[1], "price_category": row.get("_price_category"),
                    "approvals": {key: approved(row.get(key)) for key in APPROVAL_HEADERS},
                    "state": row.get("state") or ("WAITING_APPROVAL" if not has_approvals(row) else "UNPROCESSED"),
-                   "sent": row.get("email_status") == "SENT" or row.get("state") == "SENT",
+                   "sent": delivery.sent,
                    "blocking_reasons": blocked, "in_batch": included,
                    "selection_status": "selected" if included else ("blocked" if blocked else "over_limit")}
         report.append(display)
@@ -341,6 +348,7 @@ def private_json(path, payload):
 
 class BatchProcessor:
     journal_class = BatchJournal
+    reconciles_delivery_receipts = False
 
     def __init__(self, settings, sheet, renderer, mailer, persist=None):
         self.s, self.sheet, self.renderer, self.mailer = settings, sheet, renderer, mailer
@@ -365,9 +373,40 @@ class BatchProcessor:
     def checked(self, entry, record_id, action):
         rows = self.sheet.rows()
         row = self.locate(rows, entry, record_id)
+        delivery = DeliveryEvidence(self.s).inspect(row, own_intent=(self.plan_id, entry["target"]))
+        if delivery.blockers:
+            raise SheetIntegrityError("; ".join(delivery.blockers))
+        explicit_resend = getattr(self, "batch_action", None) == "resend"
+        if delivery.accepted and not explicit_resend and not self.reconciles_delivery_receipts:
+            raise SheetIntegrityError("Already sent according to durable acceptance; create a fresh preview.")
         if row.get("ticket_token"):
             self.journal.claim(self.s, row)  # Verify durable identity at every later gate too.
-        return row, reasons(row, rows, self.s.event_id, action)
+        if explicit_resend and action == "retry":
+            # Internal gates of an explicitly selected resend must not treat the
+            # prior acceptance as a new normal-send authorization or exclusion.
+            delivery = Delivery(False, delivery.accepted, delivery.blockers)
+        return row, reasons(row, rows, self.s.event_id, action, delivery=delivery)
+
+    def validate_delivery_selection(self, plan):
+        """Reject stale normal plans before creating/binding any journal actions.
+
+        The pinned pilot has its own receipt reconciliation protocol. It still
+        uses checked() at its later issuance/submission gates.
+        """
+        if self.reconciles_delivery_receipts:
+            return
+        rows = self.sheet.rows()
+        evidence = DeliveryEvidence(self.s)
+        for entry in plan["entries"]:
+            action = evidence.action(plan, entry)
+            if action and action["done"]:
+                continue
+            row = self.locate(rows, entry, action["record_id"] if action else (entry["record_id"] or "unreserved"))
+            delivery = evidence.inspect(row)
+            if delivery.blockers:
+                raise SheetIntegrityError("; ".join(delivery.blockers))
+            if delivery.accepted and plan["action"] != "resend" and not (action and action["done"]):
+                raise SheetIntegrityError("Already sent according to durable acceptance; saved plan is stale. Create a fresh preview.")
 
     def blocked(self, row, blocked):
         # Never rewrite delivery history or reactivate/cancel an issued ticket here.
@@ -404,6 +443,9 @@ class BatchProcessor:
             return []  # Empty snapshots create no journals, claims, tracking or render artifacts.
         outcomes = []
         with file_lock(self.s.runtime / "worker.lock", blocking=False), file_lock(self.s.runtime / "sheets.lock"):
+            self.plan_id = plan["plan_id"]
+            self.batch_action = plan["action"]
+            self.validate_delivery_selection(plan)
             self.journal = self.journal_class(self.s)
             self.journal.bind(plan)
             # Preflight every selected locator and ALL source access before any writes.

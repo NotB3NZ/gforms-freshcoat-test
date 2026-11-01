@@ -374,6 +374,7 @@ class SingleSheet:
 
 class SingleProcessor(BatchProcessor):
     """Seal the reused processor to one action/entry, including resolution-only scopes."""
+    reconciles_delivery_receipts = True
     def execute(self, plan):
         require(self.s.mode in ("apply", "retry"), "A resolution-only scope cannot issue or send tickets.")
         original = self.sheet.selection["plan"]
