@@ -183,6 +183,18 @@ class DurableDeliveryTests(unittest.TestCase):
         self.assertEqual(report[0]['blocking_reasons'], ['already sent; explicit resend required'])
         self.assertEqual(self.snapshot(), before)
 
+    def test_accepted_receipt_with_changed_current_name_is_blocked_from_normal_send(self):
+        self.linked_acceptance()
+        self.sheet.data['sources']['discount_15'][0]['name'] = 'Changed Synthetic Name'
+
+        report, plan = preview(self.s, self.sheet, source='discount_15')
+
+        self.assertFalse(report[0]['sent'])
+        self.assertTrue(any('binding mismatch or ambiguity' in reason
+                            for reason in report[0]['blocking_reasons']))
+        self.assertNotIn(2, [entry['snapshot_row'] for entry in plan['entries']])
+        self.assertFalse(self.s.email_enabled)
+
     def test_acceptance_does_not_remove_approval_or_frozen_identity_safeguards(self):
         self.linked_acceptance()
         self.sheet.data['sources']['discount_15'][0]['confirmation'] = False

@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch, sentinel
@@ -52,6 +53,28 @@ class ProfileTests(unittest.TestCase):
         self.assertNotEqual(test.runtime, production.runtime)
         self.assertNotEqual(test.generated, production.generated)
         self.assertEqual(len(production_sources(production)), 1)
+
+    def test_production_sources_allow_distinct_tabs_in_one_spreadsheet(self):
+        sources = []
+        for source_id, tab_id, tab_name in (
+                ("regular", 123, "Participants"),
+                ("discount_15", 456, "15% Discounted"),
+                ("discount_10", 789, "Discounted10%")):
+            source = deepcopy(self.source)
+            source.update(id=source_id, tab_id=tab_id, tab_name=tab_name,
+                          spreadsheet_id="consolidated-production-sheet")
+            sources.append(source)
+        (self.root / "config/sources.production.json").write_text(
+            json.dumps({"version": 1, "sources": sources}))
+
+        configured = production_sources(self.load("production"))
+
+        self.assertEqual([source["id"] for source in configured],
+                         ["regular", "discount_15", "discount_10"])
+        self.assertEqual({source["spreadsheet_id"] for source in configured},
+                         {"consolidated-production-sheet"})
+        self.assertEqual(len({(source["spreadsheet_id"], source["tab_id"])
+                              for source in configured}), 3)
 
     def test_production_never_falls_back_to_legacy_file(self):
         (self.root / ".env.production").unlink()
