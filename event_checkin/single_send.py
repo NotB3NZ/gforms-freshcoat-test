@@ -254,7 +254,13 @@ def diagnose_existing(settings, path, transport=None):
         action = db.execute("SELECT record_id,message_id,done FROM actions WHERE plan_id=? AND target=?",
                             (frozen["plan_id"],frozen["entries"][0]["target"])).fetchone()
         initial = Row(NUMBER, selection["selected_data"], SOURCE)
-        claim = db.execute("SELECT * FROM claims WHERE event_id=? AND email=?",(settings.event_id,recipient(initial))).fetchone()
+        if initial.get("record_id"):
+            claim = db.execute("SELECT * FROM claims WHERE event_id=? AND record_id=?",
+                               (settings.event_id, initial.get("record_id"))).fetchone()
+        else:
+            claims = db.execute("SELECT * FROM claims WHERE event_id=? AND email=? LIMIT 2",
+                                (settings.event_id, recipient(initial))).fetchall()
+            claim = claims[0] if len(claims) == 1 else None
         saved_plan = db.execute("SELECT digest FROM plans WHERE id=?",(frozen["plan_id"],)).fetchone()
         require(action and claim, "The existing journal action or reservation is unavailable; stop without replacing it.")
         completed = db.execute("SELECT COUNT(*) FROM actions WHERE record_id=? AND done=1",(action[0],)).fetchone()[0]

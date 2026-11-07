@@ -152,11 +152,33 @@ def reasons(row, rows, event_id, action="send", *, delivery=None):
                 row.get("normalized_email"), row.get("ticket_name"), row.get("ticket_tier"),
                 row.get("price_category"), row.get("source_id")):
             blocked.append("issued recipient/name/tier/source changed; staff review required")
+    if row.get("_shared_email_review_required"):
+        blocked.append("shared-email attendee details changed; staff review required")
     email = recipient(row)
     group = [r for r in rows if r.get("event_id") in ("", event_id) and email and
              email in (recipient(r), r.get("normalized_email"))]
     issued = [r for r in group if r.get("ticket_token")]
-    if len(issued) > 1:
+    group_id = row.get("_shared_email_group_id")
+    member_rows = row.data.get("_shared_email_member_rows", [])
+    approved_peers = [r for r in group if group_id and r.get("_shared_email_group_id") == group_id
+                      and r.source_id == row.source_id and r.number in member_rows]
+    valid_shared_member = row in approved_peers and len(approved_peers) >= 2
+    outside_peers = [r for r in group if r not in approved_peers]
+    outside_issued = [r for r in issued if r in outside_peers]
+    if valid_shared_member:
+        if outside_issued:
+            if len(outside_issued) > 1:
+                blocked.append("conflicting issued tickets for one event/email")
+            else:
+                blocked.append("duplicate of issued canonical registration " + target(outside_issued[0]))
+        elif not issued:
+            eligible_outside = [r for r in outside_peers if has_approvals(r) and valid_details(r)]
+            if eligible_outside:
+                if any(details(r) != details(row) for r in eligible_outside):
+                    blocked.append("conflicting approved registrations; staff review required")
+                else:
+                    blocked.append("duplicate of approved canonical registration " + target(eligible_outside[0]))
+    elif len(issued) > 1:
         blocked.append("conflicting issued tickets for one event/email")
     elif issued:
         if not same_row(row, issued[0]):
@@ -222,6 +244,8 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
     # changing the execution adapter's ordinary discovery behavior.
     reader = getattr(sheet, "preview_rows", sheet.rows) if selection_version == 2 else sheet.rows
     rows = reader()  # ALL sources must be readable, even for one targeted registration.
+    from .shared_email import apply_approved_groups
+    rows = apply_approved_groups(settings, rows)
     validate_production_identities(rows)
     order = source_order(sheet, rows)
     if selection_version == 2:
@@ -257,6 +281,7 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
         if included or (selection_version == 1 and waiting):
             entries.append({"target": target(row), "source": row.source_id,
                             "record_id": row.get("record_id"), "fingerprint": fingerprint(row),
+                            "shared_email_group_id": row.get("_shared_email_group_id") or "",
                             "issued_identity": issued_identity(row) if row.get("ticket_token") else "",
                             "delivery": [row.get(k) for k in ("email_status", "message_id", "email_sent_at", "email_attempts")],
                             "process": included})
@@ -278,7 +303,12 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
 
 class BatchJournal:
     def __init__(self, settings):
-        self.path = private_directory(settings.runtime) / "production-batches.sqlite3"
+        self.path = Path(settings.runtime) / "production-batches.sqlite3"
+        from .shared_email import claims_schema
+        schema = claims_schema(self.path)
+        if schema in ("legacy", "unsupported"):
+            raise SheetIntegrityError("Journal claims schema needs a backed-up shared-email migration before ticket reservations.")
+        private_directory(settings.runtime)
         if not self.path.exists():
             self.path.touch(mode=0o600)
         self.path.chmod(0o600)
@@ -288,7 +318,8 @@ class BatchJournal:
                           message_id TEXT NOT NULL, done INTEGER DEFAULT 0, PRIMARY KEY(plan_id,target))""")
             db.execute("""CREATE TABLE IF NOT EXISTS claims (event_id TEXT, email TEXT, record_id TEXT UNIQUE,
                           participant_id TEXT UNIQUE, token TEXT UNIQUE, name TEXT, tier TEXT, price TEXT,
-                          source TEXT, PRIMARY KEY(event_id,email))""")
+                          source TEXT, PRIMARY KEY(event_id,record_id))""")
+            db.execute("CREATE INDEX IF NOT EXISTS claims_event_email_idx ON claims(event_id,email)")
 
     def db(self):
         return closing(sqlite3.connect(self.path, timeout=30, isolation_level=None))
@@ -317,15 +348,30 @@ class BatchJournal:
         values = (settings.event_id, recipient(row), row.get("record_id"),
                   row.get("participant_id") or "P-" + str(uuid.uuid4()),
                   row.get("ticket_token") or secrets.token_urlsafe(32), *details(row), row.source_id)
+        if not values[2]:
+            raise SheetIntegrityError("A durable registration ID is required before ticket reservation.")
         with self.db() as db:
-            old = db.execute("SELECT * FROM claims WHERE event_id=? AND email=?", values[:2]).fetchone()
+            db.execute("BEGIN IMMEDIATE")
+            old = db.execute("SELECT * FROM claims WHERE event_id=? AND record_id=?",
+                             (values[0], values[2])).fetchone()
             if old:
-                if old[2] != values[2] or old[5:] != values[5:] or (row.get("ticket_token") and old[3:5] != values[3:5]):
+                if old[1] != values[1] or old[5:] != values[5:] or (row.get("ticket_token") and old[3:5] != values[3:5]):
                     raise SheetIntegrityError("Durable ticket reservation conflicts with current registration; review required.")
+                db.execute("COMMIT")
                 return old[3:5]
+            same_email = db.execute("SELECT record_id FROM claims WHERE event_id=? AND email=?",
+                                    values[:2]).fetchall()
+            if same_email:
+                group_id = row.get("_shared_email_group_id")
+                member_ids = set(row.data.get("_shared_email_member_record_ids", []))
+                if (not group_id or values[2] not in member_ids
+                        or any(claim[0] not in member_ids for claim in same_email)):
+                    raise SheetIntegrityError("Another attendee already holds this event/email reservation; explicit shared-email approval is required.")
             try:
                 db.execute("INSERT INTO claims VALUES(?,?,?,?,?,?,?,?,?)", values)
+                db.execute("COMMIT")
             except sqlite3.IntegrityError:
+                db.execute("ROLLBACK")
                 raise SheetIntegrityError("Durable ticket identity conflicts; review required.") from None
             return values[3:5]
 
@@ -360,18 +406,25 @@ class BatchProcessor:
         self.sheet.update(row, changes)
         self.persist()  # Fixture checkpoints survive every successful metadata write.
 
+    def current_rows(self):
+        from .shared_email import apply_approved_groups
+        return apply_approved_groups(self.s, self.sheet.rows())
+
     def locate(self, rows, entry, record_id):
         matches = [r for r in rows if r.source_id == entry["source"] and r.get("record_id") == record_id]
         if not matches and not entry["record_id"]:
             matches = [r for r in rows if target(r) == entry["target"] and not r.get("record_id")]
         if len(matches) != 1 or fingerprint(matches[0]) != entry["fingerprint"]:
             raise SheetIntegrityError("Selected registration moved/changed or cannot be resolved uniquely; create a fresh preview.")
+        if ("shared_email_group_id" in entry
+                and (matches[0].get("_shared_email_group_id") or "") != entry.get("shared_email_group_id", "")):
+            raise SheetIntegrityError("Shared-email approval changed after selection; create a fresh preview.")
         if entry.get("issued_identity") and issued_identity(matches[0]) != entry["issued_identity"]:
             raise SheetIntegrityError("Issued identity changed after selection; staff review required.")
         return matches[0]
 
     def checked(self, entry, record_id, action):
-        rows = self.sheet.rows()
+        rows = self.current_rows()
         row = self.locate(rows, entry, record_id)
         delivery = DeliveryEvidence(self.s).inspect(row, own_intent=(self.plan_id, entry["target"]))
         if delivery.blockers:
@@ -395,7 +448,7 @@ class BatchProcessor:
         """
         if self.reconciles_delivery_receipts:
             return
-        rows = self.sheet.rows()
+        rows = self.current_rows()
         evidence = DeliveryEvidence(self.s)
         for entry in plan["entries"]:
             action = evidence.action(plan, entry)
@@ -450,7 +503,7 @@ class BatchProcessor:
             self.journal.bind(plan)
             # Preflight every selected locator and ALL source access before any writes.
             actions = [self.journal.action(plan, e) for e in entries]
-            rows = self.sheet.rows()
+            rows = self.current_rows()
             for entry, (rid, _, done) in zip(entries, actions):
                 if not done:
                     self.locate(rows, entry, rid)
@@ -560,7 +613,7 @@ class BatchProcessor:
         if outcome not in ("sent", "retry"):
             raise SheetIntegrityError("Resolve delivery as sent or retry after reviewing provider logs.")
         with file_lock(self.s.runtime / "worker.lock", blocking=False), file_lock(self.s.runtime / "sheets.lock"):
-            rows = self.sheet.rows()
+            rows = self.current_rows()
             row = select(rows, ids=[identifier])[0]
             uncertain = row.get("state") == "EMAIL_REVIEW" or (
                 row.get("state") == "PROCESSING" and row.get("email_status") in ("SENDING", "AMBIGUOUS"))

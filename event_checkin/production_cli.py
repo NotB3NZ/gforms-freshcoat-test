@@ -11,7 +11,7 @@ from .mailer import SMTPMailer
 from .production import BatchProcessor, preview, private_json, validate_selection
 from .production_sheets import FixtureSheets, ProductionSheets, PRODUCTION_METADATA, source_mapping
 
-COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "production-single-send", "production-inbox-test", "batch-preview", "batch-run", "batch-resolve-email")
+COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "production-single-send", "production-inbox-test", "batch-preview", "batch-run", "batch-resolve-email", "shared-email-review", "shared-email-approve", "shared-email-migrate-journal")
 
 
 def batch_limit(value):
@@ -101,6 +101,18 @@ def register(commands):
     resolve.add_argument("--outcome", required=True, choices=("sent", "retry"))
     resolve.add_argument("--fixture", type=Path)
     resolve.add_argument("--state-out", type=Path)
+    review = commands.add_parser("shared-email-review", help="Read-only review of exact registrations proposed to share one delivery email; never prints names/emails")
+    review.add_argument("--source", choices=("regular", "discount_15", "discount_10"), required=True)
+    review.add_argument("--rows", type=physical_row, nargs="+", required=True, metavar="ROW")
+    approve = commands.add_parser("shared-email-approve", help="Privately approve an exact reviewed group after explicit staff confirmations")
+    approve.add_argument("--source", choices=("regular", "discount_15", "discount_10"), required=True)
+    approve.add_argument("--rows", type=physical_row, nargs="+", required=True, metavar="ROW")
+    approve.add_argument("--review-sha256", required=True)
+    approve.add_argument("--confirm-distinct-attendees", action="store_true", required=True)
+    approve.add_argument("--confirm-payment-coverage", action="store_true", required=True)
+    migrate = commands.add_parser("shared-email-migrate-journal", help="Back up and migrate the local ticket-claim index to allow explicitly approved shared email")
+    migrate.add_argument("--backup", type=Path, required=True, help="New private backup path inside runtime-production")
+    migrate.add_argument("--apply", action="store_true", required=True, help="Required to apply the local SQLite schema migration")
 
 
 class NoEmail:
@@ -123,6 +135,45 @@ def run(settings, args):
         return run_command(settings, args)
     if not settings.event_id:
         raise ConfigurationError("Set a separate permanent production EVENT_ID locally before preparing batches.")
+    if args.command in ("shared-email-review", "shared-email-approve"):
+        from .shared_email import approvals_path, review_members, save_approval
+        sheet = ProductionSheets(settings, writable=False)
+        rows = sheet.rows()
+        review, review_hash, members = review_members(settings, rows, args.source, args.rows)
+        if args.command == "shared-email-review":
+            from .production import has_approvals
+            print(json.dumps({
+                "source": args.source,
+                "review_sha256": review_hash,
+                "shared_delivery_email_match": True,
+                "member_count": len(members),
+                "members": [{
+                    "row": row.number,
+                    "registration_sha256": item["registration_sha256"],
+                    "all_four_payment_approvals_true": has_approvals(row),
+                    "ticket_already_issued": bool(row.get("ticket_token")),
+                } for row, item in zip(sorted(members, key=lambda r: r.number), review["members"])],
+                "approval_written": False,
+                "personal_details_printed": False,
+            }, indent=2))
+            return
+        group_id = save_approval(settings, review, args.review_sha256,
+                                 confirm_distinct_attendees=args.confirm_distinct_attendees,
+                                 confirm_payment_coverage=args.confirm_payment_coverage)
+        print(json.dumps({"approved": True, "group_id": group_id,
+                          "source": args.source, "rows": sorted(args.rows),
+                          "approval_file": str(approvals_path(settings)),
+                          "personal_details_printed": False}, indent=2))
+        return
+    if args.command == "shared-email-migrate-journal":
+        from .locking import file_lock
+        from .shared_email import migrate_claims_database
+        database = settings.runtime / "production-batches.sqlite3"
+        backup = runtime_path(settings, args.backup)
+        with file_lock(settings.runtime / "worker.lock", blocking=False), file_lock(settings.runtime / "sheets.lock"):
+            result = migrate_claims_database(database, backup)
+        print(json.dumps(result, indent=2))
+        return
     if args.command == "batch-run":
         if getattr(args, "authorized_plan", False):
             if args.pilot or args.fixture or args.state_out:

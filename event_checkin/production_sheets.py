@@ -114,6 +114,8 @@ class ProductionTable:
         # One batch read of only the reviewed columns; no ID/proof-file downloads.
         positions = {key: column_number(col) for key, (_, col) in self.mapping.items()}
         positions.update({key: header.index(key) + 1 for key in PRODUCTION_METADATA if key in header})
+        if len(header) > 1 and header[1] == "Timestamp":
+            positions["submission_timestamp"] = 2
         keys = list(positions)
         ranges = [rowcol_to_a1(2, positions[key]) + ":" + rowcol_to_a1(self.ws.row_count, positions[key]) for key in keys]
         columns = self.ws.batch_get(ranges, value_render_option="UNFORMATTED_VALUE")
@@ -139,11 +141,12 @@ class ProductionTable:
         if not changes or set(changes) - set(PRODUCTION_METADATA):
             raise SheetIntegrityError("Production updates may only change reviewed app-owned metadata.")
         current = self.rows(require_metadata=True)
+        expected = {k: v for k, v in row.data.items() if not k.startswith("_shared_email_")}
         if row.get("record_id"):
             matches = [r for r in current if r.get("record_id") == row.get("record_id")]
         else:
-            matches = [r for r in current if r.number == row.number and r.data == row.data]
-        if len(matches) != 1 or matches[0].data != row.data:
+            matches = [r for r in current if r.number == row.number and r.data == expected]
+        if len(matches) != 1 or matches[0].data != expected:
             raise SheetIntegrityError("Registration changed during the update; no write attempted.")
         target = matches[0]
         header = self.header(require_metadata=True)
@@ -267,9 +270,10 @@ class FixtureSheets:
     def update(self, row, changes):
         if not changes or set(changes) - set(PRODUCTION_METADATA):
             raise SheetIntegrityError("Only app-owned metadata may be updated.")
+        expected = {k: v for k, v in row.data.items() if not k.startswith("_shared_email_")}
         matches = [r for r in self.rows() if r.source_id == row.source_id and
                    (r.get("record_id") == row.get("record_id") if row.get("record_id") else r.number == row.number)]
-        if len(matches) != 1 or matches[0].data != row.data:
+        if len(matches) != 1 or matches[0].data != expected:
             raise SheetIntegrityError("Fixture changed before update.")
         self.data["sources"][row.source_id][matches[0].number - 2].update(deepcopy(changes))
         row.data.update(changes)
