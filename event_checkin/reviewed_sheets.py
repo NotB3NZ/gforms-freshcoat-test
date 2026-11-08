@@ -48,6 +48,8 @@ def read_source(http, entry, *, first=2, last=None, data=True):
     reviewed = entry['original_headers'] + list(PRODUCTION_METADATA)
     positions = {key: column_number(col) for key, (_, col) in source_mapping(source).items()}
     positions.update({key: reviewed.index(key)+1 for key in PRODUCTION_METADATA})
+    if len(entry['original_headers']) > 1 and entry['original_headers'][1] == 'Timestamp':
+        positions['submission_timestamp'] = 2
     groups = []
     if data:
         for col in sorted(positions.values()):

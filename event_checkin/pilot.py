@@ -157,7 +157,13 @@ def classify_recovery(settings, plan, entry, rows):
                 db.execute('PRAGMA query_only=ON')
                 owners = db.execute('SELECT record_id FROM claims WHERE event_id=? AND email=?',
                                     (settings.event_id, recipient(row))).fetchall()
-                require(all(owner == (action[0],) for owner in owners), 'Another local identity reservation requires review.')
+                member_ids = {value for value in row.data.get('_shared_email_member_record_ids', []) if value}
+                member_rows = row.data.get('_shared_email_member_rows', [])
+                same_approved_group = bool(row.get('_shared_email_group_id')
+                    and row.number in member_rows and len(member_rows) >= 2
+                    and all(owner[0] in member_ids for owner in owners))
+                require(all(owner == (action[0],) for owner in owners) or same_approved_group,
+                        'Another local identity reservation requires review.')
                 owners = db.execute('SELECT plan_id,target FROM actions WHERE record_id=?', (action[0],)).fetchall()
                 require(owners == [(plan['plan_id'], entry['target'])], 'Another processing action owns this registration.')
             legacy = settings.runtime / 'issuance.sqlite3'
@@ -213,6 +219,16 @@ def classify_recovery(settings, plan, entry, rows):
                                   'identity_reserved': claim is not None, 'issued': issued, 'blockers': blocked}
 
 
+def verified_rows(settings, rows):
+    """Normalize raw source reads through the private, current approval bindings.
+
+    Every eligibility, recovery, tracking and final-send gate must see the same
+    derived group membership. These annotations are in-memory only.
+    """
+    from .shared_email import apply_approved_groups
+    return apply_approved_groups(settings, rows)
+
+
 class PilotReader(LiveTestSheet):
     def __init__(self, settings, *, read_scheduler=None):
         # Only the read adapter uses a disabled-email clone. The mailer always
@@ -221,7 +237,7 @@ class PilotReader(LiveTestSheet):
         self.dataset = self.reader.dataset
 
     def rows(self):
-        return self.reader.rows()  # Fresh schema gates + batched data for ALL sources.
+        return verified_rows(self.settings, self.reader.rows())  # Fresh schema + the same verified approvals for every gate.
 
     def read_for_update(self, source, number):
         return self.reader.read_for_update(source, number)
@@ -274,7 +290,7 @@ class PilotSheet:
         self.settings.require_write()
 
     def rows(self):
-        rows = self.reader.rows()
+        rows = verified_rows(self.settings, self.reader.rows())
         for entry in self.plan['entries']:
             bound_row(self.settings, self.plan, entry, rows)
         return rows
@@ -287,6 +303,7 @@ class PilotSheet:
         read_for_update = getattr(self.reader, 'read_for_update', None)
         if callable(read_for_update):
             rows, snapshot = read_for_update(row.source_id, row.number)
+            rows = verified_rows(self.settings, rows)
             for entry in self.plan['entries']:
                 bound_row(self.settings, self.plan, entry, rows)
             fresh, _, _ = bound_row(self.settings, self.plan, entries[0], rows)
@@ -477,7 +494,7 @@ def inspect_pilot(settings, path, *, reader=None, authorization=None):
     google_sans_files()
     reader = reader or PilotReader(settings)
     require(reader.live is True and reader.dataset == plan['dataset'], 'Pilot source dataset differs from its saved plan.')
-    rows = reader.rows()
+    rows = verified_rows(settings, reader.rows())
     entries = []
     for entry in plan['entries']:
         scoped = PilotSettings(settings, path, policy, mode='inspect', authorization=authorization)

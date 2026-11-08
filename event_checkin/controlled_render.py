@@ -77,8 +77,20 @@ def check_normal_reservations(settings, row):
         try:
             with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 db.execute("PRAGMA query_only=ON")
-                if db.execute(query, (settings.event_id, recipient(row))).fetchone()[0]:
-                    raise ControlledTestBlocked("Existing local identity reservation requires review; no test started.")
+                reservations = db.execute(query, (settings.event_id, recipient(row))).fetchone()[0]
+                if reservations:
+                    if table == "claims":
+                        owners = {value[0] for value in db.execute(
+                            "SELECT record_id FROM claims WHERE event_id=? AND email=?",
+                            (settings.event_id, recipient(row))).fetchall()}
+                        members = {value for value in row.data.get("_shared_email_member_record_ids", []) if value}
+                        member_rows = row.data.get("_shared_email_member_rows", [])
+                        verified_group = bool(row.get("_shared_email_group_id") and row.number in member_rows
+                                              and len(member_rows) >= 2 and owners and owners <= members)
+                        if not verified_group:
+                            raise ControlledTestBlocked("Existing local identity reservation requires review; no test started.")
+                    else:
+                        raise ControlledTestBlocked("Existing local identity reservation requires review; no test started.")
                 if table == "claims" and row.get("record_id") and db.execute(
                         "SELECT COUNT(*) FROM actions WHERE record_id=?", (row.get("record_id"),)).fetchone()[0]:
                     raise ControlledTestBlocked("Existing local processing history requires review; no test started.")

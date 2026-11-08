@@ -9,10 +9,12 @@ from event_checkin import pilot
 from event_checkin.config import ConfigurationError
 from event_checkin.google_reads import ReadScheduler, pace_http, _schedulers
 from event_checkin.header_init import HeaderTransport
-from event_checkin.production_sheets import ProductionSheets
+from event_checkin.production_sheets import PRODUCTION_METADATA, ProductionSheets
+from event_checkin.shared_email import apply_approved_groups, registration_binding, review_members, save_approval
 from event_checkin.sheets import SheetIntegrityError
 from tests.sheet_transport import FakeClock, SheetsAPI, quota_error
 from tests import test_pilot
+from tests.test_production import record
 
 
 class ReadSchedulerTests(unittest.TestCase):
@@ -135,6 +137,63 @@ class InstrumentedReadsTests(unittest.TestCase):
             with self.assertRaises(SheetIntegrityError): self.reader.capture('discount_15',2)
         self.assertEqual(self.api.count(),1)
         self.assertFalse(any(c['method']!='get' for c in self.api.calls))
+
+    def test_shared_email_binding_matches_preview_and_authorized_timestamp_shapes(self):
+        # The preview reader consumes UNFORMATTED_VALUE; the reviewed reader
+        # consumes effectiveValue.numberValue. Google Sheets timestamps must
+        # have the same scalar representation in both paths.
+        entry = next(item for item in self.api.entries if item['source']['id'] == 'regular')
+        entry['original_headers'][1] = 'Timestamp'
+        authorized_entry = next(item for item in self.reader.headers.plan['sources']
+                                if item['source']['id'] == 'regular')
+        authorized_entry['original_headers'][1] = 'Timestamp'
+        regular_records = self.f.reader.sheet.data['sources']['regular']
+        original_length = len(regular_records)
+        self.addCleanup(regular_records.__delitem__, slice(original_length, None))
+        first = record(name='Timestamp attendee one', email='timestamp-group@example.invalid',
+                       tier='Regular', submission_timestamp=46000.25)
+        second = record(name='Timestamp attendee two', email='timestamp-group@example.invalid',
+                        tier='Regular', submission_timestamp=46000.5)
+        self.f.reader.sheet.data['sources']['regular'].extend([first, second])
+
+        preview = ProductionSheets(self.f.s, read_scheduler=self.scheduler)
+        preview_rows = preview.tables['regular'].rows()
+        preview_members = [row for row in preview_rows if row.number in (3, 4)]
+        self.assertEqual([row.get('submission_timestamp') for row in preview_members], [46000.25, 46000.5])
+        review, review_hash, _ = review_members(self.f.s, preview_rows, 'regular', [3, 4])
+        save_approval(self.f.s, review, review_hash,
+                      confirm_distinct_attendees=True, confirm_payment_coverage=True)
+
+        reviewed = self.reader.headers.read_reviewed(authorized_entry)
+        reviewed_members = [row for row in reviewed.rows if row.number in (3, 4)]
+        self.assertEqual([row.get('submission_timestamp') for row in reviewed_members], [46000.25, 46000.5])
+        self.assertEqual([type(row.get('submission_timestamp')) for row in reviewed_members], [float, float])
+        self.assertEqual([registration_binding(self.f.s, row) for row in preview_members],
+                         [registration_binding(self.f.s, row) for row in reviewed_members])
+        normalized = apply_approved_groups(self.f.s, reviewed.rows)
+        self.assertTrue(all(next(row for row in normalized if row.number == number)
+                            .get('_shared_email_group_id') for number in (3, 4)))
+
+        # Targeted reads used immediately before tracking writes retain the
+        # exact same timestamp mapping and binding as full snapshots.
+        for number in (3, 4):
+            targeted = self.reader.headers.read_reviewed(authorized_entry, first=number, last=number)
+            self.assertEqual(targeted.rows[0].get('submission_timestamp'),
+                             next(row for row in preview_members if row.number == number).get('submission_timestamp'))
+            self.assertEqual(registration_binding(self.f.s, targeted.rows[0]),
+                             registration_binding(self.f.s, next(row for row in preview_members
+                                                                  if row.number == number)))
+        update_rows, original_cells = self.reader.read_for_update('regular', 3)
+        update_row = next(row for row in update_rows if row.source_id == 'regular' and row.number == 3)
+        self.assertEqual(update_row.get('submission_timestamp'), 46000.25)
+        self.assertEqual(original_cells['values']['submission_timestamp'], {'numberValue': 46000.25})
+        self.assertNotIn('submission_timestamp', PRODUCTION_METADATA)
+
+        self.f.reader.sheet.data['sources']['regular'][1]['submission_timestamp'] = 46000.75
+        changed = self.reader.headers.read_reviewed(authorized_entry)
+        changed_rows = apply_approved_groups(self.f.s, changed.rows)
+        self.assertTrue(all(row.get('_shared_email_review_required') for row in changed_rows
+                            if row.number in (3, 4)))
 
     def test_bad_source_schema_stops_before_any_participant_data_request(self):
         self.api.entries[-1]['original_headers'][2] = 'Synthetic changed header'

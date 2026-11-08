@@ -12,7 +12,8 @@ from unittest.mock import patch
 from event_checkin import authorized_batch as batch, pilot, pilot_resend
 from event_checkin.config import ConfigurationError
 from event_checkin.google_reads import ReadScheduler
-from event_checkin.production import preview, private_json
+from event_checkin.production import preview, private_json, reasons
+from event_checkin.shared_email import approvals_path, review_members, save_approval
 from event_checkin.production_cli import register, run as run_cli
 from tests import test_pilot
 from tests.sheet_transport import FakeClock, SheetsAPI, quota_error
@@ -96,6 +97,87 @@ class AuthorizedBatchTests(unittest.TestCase):
         self.assertFalse((self.s.runtime/'production-batches.sqlite3').exists())
         self.assertFalse(self.f.smtp.connections)
         self.assertFalse(self.f.renderer.calls)
+
+    def test_authorized_batch_uses_verified_group_for_preflight_send_and_resume(self):
+        # Start from raw fixture rows, save an explicit private approval, then
+        # exercise the authorized path (which receives unannotated source reads).
+        source_rows = self.f.reader.sheet.data['sources']['discount_15']
+        source_rows[3]['email'] = 'authorized-shared@example.invalid'
+        source_rows[4]['email'] = 'authorized-shared@example.invalid'
+        third = record(name='Synthetic unapproved attendee', email='authorized-shared@example.invalid',
+                       tier='Regular (₱246)', _price_category='15_percent_discount',
+                       confirmation=False)
+        source_rows.append(third)
+        self.edited_fields = {'email'}
+        review, review_hash, _ = review_members(
+            self.s, self.f.reader.rows(), 'discount_15', [5, 6])
+        save_approval(self.s, review, review_hash,
+                      confirm_distinct_attendees=True, confirm_payment_coverage=True)
+        _, plan = preview(self.s, self.f.reader,
+                          ids=['discount_15:row:5', 'discount_15:row:6'], limit='all',
+                          selection_version=2)
+        self.path = self.s.runtime/'batch-reviews/shared-email-authorized.json'
+        private_json(self.path, plan)
+        self.plan = plan
+        self.encoded = self.path.read_bytes()
+        self.original_plan = self.encoded
+        self.policy_path = batch.prepare(self.s, self.path)
+        self.scope = batch.PlanAuthorization()
+        self.assertEqual([entry['snapshot_row'] for entry in self.plan['entries']], [5, 6])
+
+        # Inspection deliberately reads the underlying reader's raw rows.
+        before = self.inspect()
+        self.assertTrue(all(not entry['blockers'] for entry in before['entries']))
+        preview_rows = pilot.verified_rows(self.s, self.f.reader.rows())
+        third_row = next(row for row in preview_rows if row.number == 12)
+        self.assertTrue(reasons(third_row, preview_rows, self.s.event_id))
+
+        self.enable()
+        self.f.smtp.results = [None]
+        first = self.execute(first_sends_only=True)
+        self.assertEqual(first, ['outside remaining first sends; original attempt retained', 'sent'])
+        self.assertEqual(self.row(1)['email_status'], 'SENT')
+
+        # The remaining attendee can send after the first accepted ticket. Lose
+        # the final Sheet completion write to exercise receipt-based recovery.
+        original_write = self.f.reader.write
+        def interrupt_completion(snapshot, changes):
+            if changes.get('email_status') == 'SENT':
+                raise ConnectionError('Synthetic interruption after SMTP acceptance')
+            return original_write(snapshot, changes)
+        self.f.reader.write = interrupt_completion
+        self.f.smtp.results = [None]
+        try:
+            with self.assertRaises(ConnectionError):
+                self.execute()
+        finally:
+            self.f.reader.write = original_write
+        self.assertEqual(len(self.f.smtp.messages), 2)
+        resumed = self.execute()
+        self.assertEqual(resumed, ['sent', 'completed previously'])
+        rows = [self.row(0), self.row(1)]
+        self.assertEqual([row['email_status'] for row in rows], ['SENT', 'SENT'])
+        self.assertEqual(len({row['participant_id'] for row in rows}), 2)
+        self.assertEqual(len({row['ticket_token'] for row in rows}), 2)
+        self.assertEqual(len({row['message_id'] for row in rows}), 2)
+        self.assertEqual(len({message['Message-ID'] for message in self.f.smtp.messages}), 2)
+        self.assertEqual(len({message['To'] for message in self.f.smtp.messages}), 1)
+        self.assertTrue(all(not any(key.startswith('_shared_email_') for key in change)
+                            for change in self.f.reader.sheet.attempts))
+        after = self.inspect()
+        self.assertTrue(all(not [blocker for blocker in entry['blockers']
+                                 if blocker != 'already sent; explicit resend required']
+                            for entry in after['entries']), after['entries'])
+
+        # Revoking approval blocks the same-email issued group. A changed detail
+        # also invalidates the saved plan and cannot inherit the prior binding.
+        private_json(approvals_path(self.s), {'version': 1, 'event_id': self.s.event_id, 'groups': []})
+        revoked = self.inspect()
+        self.assertTrue(all(entry['blockers'] for entry in revoked['entries']))
+        source_rows[3]['name'] = 'Changed synthetic attendee'
+        self.edited_fields.add('name')
+        with self.assertRaisesRegex(Exception, 'changed or moved'):
+            self.inspect()
 
     def test_execution_requires_both_gates_before_any_io(self):
         for email, authorized in ((False, False), (True, False), (False, True)):

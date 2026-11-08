@@ -60,6 +60,8 @@ class SheetsAPI:
         positions = {key: column_number(col)-1 for key, (_, col) in source_mapping(entry['source']).items()}
         headers = entry['original_headers'] + list(PRODUCTION_METADATA)
         positions.update({key: headers.index(key) for key in PRODUCTION_METADATA})
+        if len(entry['original_headers']) > 1 and entry['original_headers'][1] == 'Timestamp':
+            positions['submission_timestamp'] = 1
         return positions
 
     def matrix(self, entry):

@@ -364,7 +364,9 @@ class BatchJournal:
             if same_email:
                 group_id = row.get("_shared_email_group_id")
                 member_ids = set(row.data.get("_shared_email_member_record_ids", []))
-                if (not group_id or values[2] not in member_ids
+                member_rows = row.data.get("_shared_email_member_rows", [])
+                if (not group_id or row.number not in member_rows or len(member_rows) < 2
+                        or values[2] not in member_ids
                         or any(claim[0] not in member_ids for claim in same_email)):
                     raise SheetIntegrityError("Another attendee already holds this event/email reservation; explicit shared-email approval is required.")
             try:
