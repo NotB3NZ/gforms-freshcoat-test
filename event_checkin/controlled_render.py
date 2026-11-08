@@ -241,6 +241,28 @@ def archive_invalid(path, destination):
         Path(path).unlink()
 
 
+def verify_qr(settings, image, token):
+    """Try the full badge, then one bounded crop with an in-memory quiet zone."""
+    import cv2
+    if image is None or image.size == 0 or not token:
+        raise ControlledTestBlocked("Rendered QR could not be verified.")
+    detector = cv2.QRCodeDetector()
+    decoded = detector.detectAndDecode(image)[0]
+    if not decoded:
+        x, y, size = settings.qr_x, settings.qr_y, settings.qr_size
+        height, width = image.shape[:2]
+        if (any(type(value) is not int for value in (x, y, size)) or x < 0 or y < 0
+                or size <= 0 or x + size > width or y + size > height):
+            raise ControlledTestBlocked("Configured QR crop is outside the badge bounds.")
+        margin = 32
+        crop = image[y:y + size, x:x + size]
+        padded = cv2.copyMakeBorder(crop, margin, margin, margin, margin,
+                                    cv2.BORDER_CONSTANT, value=(255, 255, 255))
+        decoded = detector.detectAndDecode(padded)[0]
+    if decoded != token:
+        raise ControlledTestBlocked("Rendered QR did not decode to the saved ticket token.")
+
+
 def verify_render(settings, path, name, tier, token):
     """Verify QR and text pixels against independently literalized bindings.
 
@@ -254,8 +276,7 @@ def verify_render(settings, path, name, tier, token):
     template, dimensions = inspect_template(settings)
     template = prepared_template(template, settings.name_field, name)
     original_hash = hashlib.sha256(settings.template.read_bytes()).hexdigest()
-    if cv2.QRCodeDetector().detectAndDecode(cv2.imread(str(path)))[0] != token:
-        raise ControlledTestBlocked("Rendered QR did not decode to the test token.")
+    verify_qr(settings, cv2.imread(str(path)), token)
     boxes = {settings.name_field: [], settings.tier_field: []}
     expected = {settings.name_field: name, settings.tier_field: tier}
     def visit(elements, ox=0, oy=0):
