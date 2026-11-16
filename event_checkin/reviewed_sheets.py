@@ -115,6 +115,13 @@ class ReviewedSheets:
         self.read_scheduler = headers.read_scheduler
         self.dataset = digest([e['source'] for e in plan['sources']])
 
+    def special_recipients(self, rows):
+        from .special_recipients import apply_recipient_overrides
+        if "special" in self.source_order:
+            entry = next(e for e in self.plan["sources"] if e["source"]["id"] == "special")
+            apply_recipient_overrides(self.settings, rows, entry["source"], self.headers.http)
+        return rows
+
     def snapshot(self):
         # A successful retry after quota waiting invalidates every earlier source
         # in this sweep. Restart once; never submit using pre-backoff approvals.
@@ -130,8 +137,8 @@ class ReviewedSheets:
                     item = self.headers.read_reviewed(entry)
                     require(item.header == initial[entry['source']['id']])
                     sources[entry['source']['id']] = item
+            rows = self.special_recipients([row for item in sources.values() for row in item.rows])
             if generation == self.read_scheduler.generation:
-                rows = [row for item in sources.values() for row in item.rows]
                 validate_production_identities(rows)
                 return rows, sources
             self.read_scheduler.progress('Google Sheets read waiting invalidated the snapshot; refreshing all source checks.')
@@ -152,11 +159,13 @@ class ReviewedSheets:
             entry = next(e for e in self.plan['sources'] if e['source']['id'] == source)
             with diagnostic_context('read_selected_original_cell_values', source):
                 current = self.headers.read_reviewed(entry, first=number, last=number)
+            self.special_recipients(rows)
             if generation != self.read_scheduler.generation:
                 self.read_scheduler.progress('Google Sheets read waiting before tracking update; refreshing eligibility and original cells.')
                 continue
             require(current.capture(number) == expected)
             before = [r for r in rows if r.source_id == source and r.number == number]
-            require(len(before) == 1 and len(current.rows) == 1 and before[0].data == current.rows[0].data)
+            require(len(before) == 1 and len(current.rows) == 1 and
+                    {k: v for k, v in before[0].data.items() if not k.startswith("_delivery_override_")} == current.rows[0].data)
             return rows, current.capture(number)
         raise SheetIntegrityError('Read waiting prevented a fresh tracking update; no write attempted.')

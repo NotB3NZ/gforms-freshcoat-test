@@ -149,7 +149,7 @@ class ProductionTable:
         if not changes or set(changes) - set(PRODUCTION_METADATA):
             raise SheetIntegrityError("Production updates may only change reviewed app-owned metadata.")
         current = self.rows(require_metadata=True)
-        expected = {k: v for k, v in row.data.items() if not k.startswith("_shared_email_")}
+        expected = {k: v for k, v in row.data.items() if not k.startswith(("_shared_email_", "_delivery_override_"))}
         if row.get("record_id"):
             matches = [r for r in current if r.get("record_id") == row.get("record_id")]
         else:
@@ -183,7 +183,7 @@ class ProductionSheets:
         client = gspread.service_account(filename=str(settings.service_account), scopes=[scope])
         client.set_timeout((10, 30))
         self.read_scheduler = read_scheduler or shared_scheduler(settings)
-        pace_http(client.http_client, self.read_scheduler)
+        self.http = pace_http(client.http_client, self.read_scheduler)
         self.tables = {}
         try:
             for source in sources:
@@ -229,6 +229,9 @@ class ProductionSheets:
         except Exception:
             raise SheetIntegrityError("A production source could not be read; batch stopped closed.") from None
         validate_production_identities(rows)
+        if "special" in self.tables:
+            from .special_recipients import apply_recipient_overrides
+            apply_recipient_overrides(self.settings, rows, self.tables["special"].source, self.http)
         return rows
 
     def update(self, row, changes):

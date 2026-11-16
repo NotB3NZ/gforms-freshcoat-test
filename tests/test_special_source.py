@@ -183,6 +183,51 @@ class SpecialPipelineTests(unittest.TestCase):
             for key in APPROVAL_HEADERS:
                 self.assertEqual(row[key], before['sources']['special'][index][key])
 
+    def test_F_override_survives_preview_reviewed_verification_and_send(self):
+        from event_checkin.special_recipients import POLICY, TAB_ID, binding
+        from event_checkin.production_sheets import ProductionSheets
+        special = self.api.entries[-1]
+        special['original_headers'][1] = 'Timestamp'
+        private_json(self.s.root/'config/production-header-init.approved.json', self.api.plan)
+        audience = self.f.reader.sheet.data['sources']['special']
+        captured = audience[0]['email']
+        audience[1]['email'] = captured
+        audience[1]['submission_timestamp'] = 46001.5
+        alternative = 'verified-attendee@example.invalid'
+        matrix = self.api.matrix
+
+        def with_F(entry):
+            output = matrix(entry)
+            if entry['source']['id'] == 'special':
+                output[1][5] = 'unapproved-F@example.invalid'
+                output[2][5] = alternative
+            return output
+
+        scheduler = ReadScheduler(clock=self.clock.monotonic, sleep=self.clock.sleep, progress=lambda _: None)
+        with patch('gspread.service_account', side_effect=self.api.client), patch.object(self.api, 'matrix', side_effect=with_F):
+            preview_reader = ProductionSheets(self.s, read_scheduler=scheduler)
+            second = next(row for row in preview_reader.rows() if (row.source_id, row.number) == ('special', 3))
+            private_json(self.s.runtime/POLICY, {'version': 1, 'event_id': self.s.event_id, 'tab_id': TAB_ID,
+                         'rows': {'3': binding(self.s, second, alternative)}})
+            report, plan = preview(self.s, preview_reader, source='special', limit='all')
+            self.assertEqual([r['email'] for r in report], [captured, alternative])
+            path = self.s.runtime/'batch-reviews/override-exact.json'
+            private_json(path, plan)
+            policy_path = batch.prepare(self.s, path)
+            reader = pilot.PilotReader(self.s, read_scheduler=scheduler)
+            preflight = pilot.inspect_pilot(self.s, path, reader=reader, authorization=self.scope)
+            self.assertTrue(all(not e['blockers'] for e in preflight['entries']))
+            policy = json.loads(policy_path.read_text())
+            policy['enabled'] = True
+            private_json(policy_path, policy)
+            self.s.email_enabled = True
+            outcome = pilot.execute(self.s, path, authorization=self.scope, reader=reader,
+                                    renderer=self.f.renderer, reload_settings=lambda: self.s)
+        self.assertEqual(outcome, ['sent', 'sent'])
+        self.assertEqual([str(m['To']) for m in self.f.smtp.messages], [captured, alternative])
+        self.assertEqual([r['email'] for r in audience], [captured, captured])
+        self.assertEqual([r['normalized_email'] for r in audience], [captured, alternative])
+
     def test_special_is_read_and_schema_checked_even_for_a_regular_target(self):
         scheduler = ReadScheduler(clock=self.clock.monotonic, sleep=self.clock.sleep, progress=lambda _: None)
         with patch('gspread.service_account', side_effect=self.api.client):

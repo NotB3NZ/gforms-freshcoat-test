@@ -90,7 +90,7 @@ def preview_summary(report, excluded, sources):
 
 
 def recipient(row):
-    return normalize_email(text(row.get("email")))
+    return normalize_email(text(row.get("_delivery_override_address") or row.get("email")))
 
 
 def details(row):
@@ -124,7 +124,10 @@ def digest(value):
 
 def fingerprint(row):
     # Approval changes are evaluated independently. Form/source edits invalidate a plan.
-    return digest([row.source_id, row.get("name"), row.get("email"), row.get("tier"), row.get("_price_category")])
+    fields = [row.source_id, row.get("name"), row.get("email"), row.get("tier"), row.get("_price_category")]
+    if row.get("_delivery_override_binding"):
+        fields.append(row.get("_delivery_override_binding"))
+    return digest(fields)
 
 
 def issued_identity(row):
@@ -133,7 +136,13 @@ def issued_identity(row):
 
 
 def reasons(row, rows, event_id, action="send", *, delivery=None):
+    from .special_recipients import potential_repeat
     blocked = []
+    if row.get("_delivery_override_review_required"):
+        blocked.append("Special recipient approval changed; staff review required")
+    if any(not same_row(row, other) and other.get("event_id") in ("", event_id)
+           and potential_repeat(row, other) for other in rows):
+        blocked.append("possible duplicate attendee with a Special address exception; staff review required")
     if is_test_token(row.get("ticket_token")):
         blocked.append("reserved controlled-test identity; cleanup/review required")
     if row.get("event_id") not in ("", event_id):
@@ -269,7 +278,7 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
         if included:
             count += 1
         display = {"target": target(row), "source": row.source_id, "row": row.number,
-                   "name": row.get("name"), "email": row.get("email"),
+                   "name": row.get("name"), "email": row.get("_delivery_override_address") or row.get("email"),
                    "tier": row.get("tier"), "mapped_tier": details(row)[1], "price_category": row.get("_price_category"),
                    "approvals": {key: approved(row.get(key)) for key in APPROVAL_HEADERS},
                    "state": row.get("state") or ("WAITING_APPROVAL" if not has_approvals(row) else "UNPROCESSED"),
