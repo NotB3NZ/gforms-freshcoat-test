@@ -1,0 +1,14 @@
+{
+  "synthetic": true,
+  "fixture_id": "synthetic-four-source-special-v1",
+  "source_order": ["regular", "discount_15", "discount_10", "special"],
+  "sources": {
+    "regular": [{"name": "Synthetic Regular", "email": "regular@example.invalid", "tier": "Regular (₱289)", "_price_category": "regular", "confirmation": true, "reference_matched": true, "price_matched": true, "payment_received": true}],
+    "discount_15": [],
+    "discount_10": [],
+    "special": [
+      {"name": "Synthetic Special", "email": "special@example.invalid", "tier": "Special Ticket (₱180)", "_price_category": "special", "confirmation": true, "reference_matched": true, "price_matched": true, "payment_received": true},
+      {"name": "Synthetic Complimentary", "email": "pass@example.invalid", "tier": "Pass", "_price_category": "special", "confirmation": true, "reference_matched": true, "price_matched": true, "payment_received": true}
+    ]
+  }
+}

@@ -111,6 +111,7 @@ class ReviewedSheets:
     def __init__(self, settings, plan, headers):
         from .production import digest
         self.settings, self.plan, self.headers = settings, plan, headers
+        self.source_order = [e['source']['id'] for e in plan['sources']]
         self.read_scheduler = headers.read_scheduler
         self.dataset = digest([e['source'] for e in plan['sources']])
 

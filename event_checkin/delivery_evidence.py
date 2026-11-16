@@ -60,7 +60,7 @@ class DeliveryEvidence:
             raise SheetIntegrityError('Ambiguous delivery action; staff review required.')
         return actions[0] if actions else None
 
-    def inspect(self, row, *, own_intent=None):
+    def inspect(self, row, *, own_intent=None, completed_entry=None):
         from .production import details, digest, fingerprint, issued_identity, recipient, target
         sent = row.get('email_status') == 'SENT' or row.get('state') == 'SENT'
         accepted, unresolved = False, False
@@ -72,10 +72,10 @@ class DeliveryEvidence:
             if not condition:
                 raise ValueError('binding')
 
-        def claim_binding():
+        def claim_binding(*, stale_details=False):
             require(bool(rid and row.get('participant_id') and row.get('ticket_token')))
             require(row.get('event_id') == self.settings.event_id)
-            require((row.get('normalized_email'), row.get('ticket_name'), row.get('ticket_tier'),
+            require(stale_details or (row.get('normalized_email'), row.get('ticket_name'), row.get('ticket_tier'),
                      row.get('price_category'), row.get('source_id')) == (recipient(row), *details(row), row.source_id))
             expected = dict(event_id=self.settings.event_id, email=row.get('normalized_email'), record_id=rid,
                             participant_id=row.get('participant_id'), token=row.get('ticket_token'),
@@ -84,9 +84,17 @@ class DeliveryEvidence:
             require(self.rows('claims', record_id=rid) == [expected])
 
         def parent_binding(plan_id, locator, record_id):
-            claim_binding()
             actions = self.rows('actions', plan_id=plan_id, target=locator)
             require(len(actions) == 1 and actions[0]['record_id'] == record_id == rid)
+            stale_details = completed_entry == (plan_id, locator)
+            if stale_details:
+                # Only an already completed original acceptance can excuse
+                # current form-detail drift. Frozen identity and all durable
+                # plan/authorization/receipt/event bindings still must agree.
+                receipts = self.rows('pilot_delivery', plan_id=plan_id, target=locator)
+                require(actions[0]['done'] == 1 and len(receipts) == 1
+                        and receipts[0]['status'] == 'ACCEPTED')
+            claim_binding(stale_details=stale_details)
             plans = self.rows('plans', id=plan_id)
             bindings = self.rows('pilot_bindings', plan_id=plan_id)
             require(len(plans) == len(bindings) == 1 and plans[0]['digest'] == bindings[0]['digest'])
@@ -112,7 +120,8 @@ class DeliveryEvidence:
             require(plan['plan_id'] == plan_id and plan['event_id'] == self.settings.event_id
                     and plan['profile'] == self.settings.profile and digest(plan) == plans[0]['digest'])
             require(len(entries) == 1 and entries[0]['source'] == row.source_id
-                    and entries[0]['fingerprint'] == fingerprint(row))
+                    and (entries[0]['snapshot_row'] == row.number if stale_details
+                         else entries[0]['fingerprint'] == fingerprint(row)))
             if scopes:
                 require(policy['entry_sha256'] == [digest(e) for e in plan['entries']])
             return actions[0], hashlib.sha256(encoded).hexdigest(), digest(entries[0])

@@ -10,6 +10,7 @@ from .config import METADATA, ConfigurationError, production_sources
 from .sheets import Row, SheetIntegrityError, validate_identities
 from .diagnostics import diagnostic_context
 from .google_reads import pace_http, shared_scheduler, fresh_read
+from .source_config import valid_source_ids
 
 APPROVAL_HEADERS = {
     "confirmation": "Confirmation",
@@ -21,6 +22,7 @@ APPROVAL_COLUMNS = {
     "regular": ("A", "U", "V", "W"),
     "discount_15": ("A", "S", "T", "U"),
     "discount_10": ("A", "S", "T", "U"),
+    "special": ("A", "S", "T", "U"),
 }
 PRODUCTION_METADATA = METADATA + ("record_id", "source_id", "price_category", "ticket_tier")
 # Explicitly reviewed row-one duplicates. A source must also opt into this exact
@@ -29,6 +31,7 @@ REVIEWED_DUPLICATE_HEADERS = {
     "regular": {"Email Address": ["C", "E"]},
     "discount_15": {"Email Address": ["C", "F"]},
     "discount_10": {"Email Address": ["C", "F"]},
+    "special": {"Email Address": ["C", "F"]},
 }
 
 
@@ -47,6 +50,11 @@ def source_mapping(source):
     mapping = {key: (value["header"], value["column"]) for key, value in source["fields"].items()}
     mapping.update({key: (label, col) for (key, label), col in
                     zip(APPROVAL_HEADERS.items(), APPROVAL_COLUMNS[source["id"]])})
+    if source['id'] == 'special' and (
+            mapping['email'] != ('Email Address', 'C') or mapping['name'][1] != 'D'
+            or mapping['tier'] != ('Please confirm', 'M')
+            or source.get('approved_duplicate_headers') != REVIEWED_DUPLICATE_HEADERS['special']):
+        raise SheetIntegrityError("Special requires delivery column C, name D, choice M and the exact C/F email headers.")
     if len({label for label, _ in mapping.values()}) != len(mapping):
         raise SheetIntegrityError("Source field and approval headers overlap.")
     if len({col for _, col in mapping.values()}) != len(mapping):
@@ -169,8 +177,8 @@ class ProductionSheets:
         self.source_order = [source["id"] for source in sources]
         from .production import digest
         self.dataset = digest(sources)
-        if {s["id"] for s in sources} != set(APPROVAL_COLUMNS):
-            raise ConfigurationError("Production requires all three reviewed sources.")
+        if not valid_source_ids(self.source_order):
+            raise ConfigurationError("Production requires the three base sources, optionally with special.")
         scope = "https://www.googleapis.com/auth/spreadsheets" + ("" if writable else ".readonly")
         client = gspread.service_account(filename=str(settings.service_account), scopes=[scope])
         client.set_timeout((10, 30))
@@ -247,13 +255,13 @@ class FixtureSheets:
     live = False
 
     def __init__(self, payload):
-        if payload.get("synthetic") is not True or set(payload.get("sources", {})) != set(APPROVAL_COLUMNS):
-            raise ConfigurationError("Use a synthetic fixture containing all three sources.")
+        if payload.get("synthetic") is not True or not valid_source_ids(payload.get("sources", {})):
+            raise ConfigurationError("Use a synthetic fixture containing the three base sources, optionally with special.")
         self.data = deepcopy(payload)
         self.dataset = payload.get("fixture_id", "synthetic-default")
         self.source_order = list(payload.get("source_order", payload["sources"]))
-        if len(self.source_order) != 3 or set(self.source_order) != set(APPROVAL_COLUMNS):
-            raise ConfigurationError("Synthetic source order must contain all three sources exactly once.")
+        if not valid_source_ids(self.source_order) or set(self.source_order) != set(payload['sources']):
+            raise ConfigurationError("Synthetic source order must contain each configured source exactly once.")
 
     def require_write(self):
         pass

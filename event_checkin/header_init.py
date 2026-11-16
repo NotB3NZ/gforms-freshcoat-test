@@ -12,9 +12,11 @@ from .locking import file_lock
 from .production_sheets import PRODUCTION_METADATA, ProductionTable
 from .sheets import SheetIntegrityError
 from .google_reads import pace_http, shared_scheduler
+from .source_config import valid_source_ids
 
 EVENT_ID = "aws-scd-mindanao-2026"
 APPROVED_RANGES = {"regular": (23, "X1:AU1"), "discount_15": (21, "V1:AS1"), "discount_10": (21, "V1:AS1")}
+SOURCE_RANGES = {**APPROVED_RANGES, "special": (21, "V1:AS1")}
 
 
 def require_checkpoint_settings(settings):
@@ -31,17 +33,18 @@ def load_plan(settings, path):
     require_checkpoint_settings(settings)
     try:
         plan = json.loads(Path(path).read_text())
-        if plan["version"] != 1 or plan["event_id"] != EVENT_ID or plan["headers"] != list(PRODUCTION_METADATA):
+        if (plan["version"] != 1 or plan["event_id"] != EVENT_ID or plan["headers"] != list(PRODUCTION_METADATA)
+                or plan.get('requires_live_verification', False) is not False):
             raise ValueError()
         entries = plan["sources"]
-        if len(entries) != 3 or {e["source"]["id"] for e in entries} != set(APPROVED_RANGES):
+        if not valid_source_ids(e['source']['id'] for e in entries):
             raise ValueError()
         configured = {s["id"]: s for s in production_sources(settings)}
-        if set(configured) != set(APPROVED_RANGES):
+        if not valid_source_ids(configured) or set(configured) != {e['source']['id'] for e in entries}:
             raise ValueError()
         for entry in entries:
             source = entry["source"]
-            count, span = APPROVED_RANGES[source["id"]]
+            count, span = SOURCE_RANGES[source["id"]]
             if configured[source["id"]] != source or entry["range"] != span or len(entry["original_headers"]) != count:
                 raise ValueError()
             ProductionTable(settings, source, None).validate_header(entry["original_headers"])

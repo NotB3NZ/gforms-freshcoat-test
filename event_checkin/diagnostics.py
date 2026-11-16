@@ -2,7 +2,7 @@
 from functools import wraps
 from contextlib import contextmanager
 
-SOURCES = frozenset(("regular", "discount_15", "discount_10"))
+SOURCES = frozenset(("regular", "discount_15", "discount_10", "special"))
 
 
 GOOGLE_REASONS = frozenset((
@@ -16,7 +16,7 @@ GOOGLE_REASONS = frozenset((
 STAGES = frozenset(("controlled_preview", "organization_inbox_test", "pilot_batch", "open_production_sources_read_only",
                     "validate_headers_and_read_mapped_columns", "read_selected_original_cell_values",
                     "validate_single_registration", "validate_header_snapshot_regular",
-                    "validate_header_snapshot_discount_15", "validate_header_snapshot_discount_10",
+                    "validate_header_snapshot_discount_15", "validate_header_snapshot_discount_10", "validate_header_snapshot_special",
                     "single_entry_execution", "single_entry_email_settings", "single_entry_read_registration",
                     "single_entry_tracking_update", "single_entry_tracking_write", "single_entry_journal_read",
                     "single_entry_read_header", "single_entry_read_tracking", "open_production_source",

@@ -18,10 +18,10 @@ from .locking import file_lock
 from .mailer import EmailNotSent
 from .production_sheets import APPROVAL_HEADERS, PRODUCTION_METADATA, validate_production_identities
 from .sheets import SheetIntegrityError, normalize_email
-from .tiers import TIERS, resolve_tier
+from .tiers import TICKET_TIERS, resolve_tier
+from .source_config import BASE_SOURCES, SOURCES, valid_source_ids
 from .test_identity import is_test_token
 
-SOURCES = ("regular", "discount_15", "discount_10")
 ORDERING = "Configured source order, then ascending physical row number."
 
 
@@ -38,8 +38,9 @@ def validate_selection(ids=None, source=None, all_sources=False, *, start_row=No
 
 def source_order(sheet, rows):
     order = list(getattr(sheet, "source_order", dict.fromkeys(r.source_id for r in rows)))
-    order += [key for key in SOURCES if key not in order]
-    if len(order) != 3 or set(order) != set(SOURCES):
+    configured = SOURCES if 'special' in order else BASE_SOURCES
+    order += [key for key in configured if key not in order]
+    if not valid_source_ids(order):
         raise SheetIntegrityError("Invalid configured source order.")
     return order
 
@@ -100,7 +101,7 @@ def valid_details(row):
     name, tier, price = details(row)
     return bool(name and len(name) <= 160 and not any(ord(c) < 32 or ord(c) == 127 for c in name)
                 and re.fullmatch(r"[^\s@<>\r\n]+@[^\s@<>\r\n]+\.[^\s@<>\r\n]+", recipient(row))
-                and tier in TIERS and price)
+                and tier in TICKET_TIERS and price)
 
 
 def has_approvals(row):
@@ -248,6 +249,8 @@ def preview(settings, sheet, *, ids=None, source=None, all_sources=False, limit=
     rows = apply_approved_groups(settings, rows)
     validate_production_identities(rows)
     order = source_order(sheet, rows)
+    if source and source not in order:
+        raise SheetIntegrityError("Selected source is not configured in this dataset.")
     if selection_version == 2:
         rows = sorted(rows, key=lambda row: (order.index(row.source_id), row.number))
     selected = select(rows, ids, source, all_sources, start_row=start_row, end_row=end_row)

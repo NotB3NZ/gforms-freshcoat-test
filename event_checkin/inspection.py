@@ -24,7 +24,7 @@ STATUSES = {
 TIER_WORDS = set('lite regular pro ticket tickets tier type php peso pesos off discount discounted '
                  'student early bird promo promotion general admission access pass day full basic '
                  'standard premium vip gold silver bronze none n a unknown unspecified only '
-                 'not or and aws scd mindanao'.split())
+                 'not or and aws scd mindanao special'.split())
 
 
 def present(value):

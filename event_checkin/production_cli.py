@@ -10,8 +10,9 @@ from .config import ConfigurationError, production_sources
 from .mailer import SMTPMailer
 from .production import BatchProcessor, preview, private_json, validate_selection
 from .production_sheets import FixtureSheets, ProductionSheets, PRODUCTION_METADATA, source_mapping
+from .source_config import SOURCES
 
-COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-inspect", "production-render-test", "production-single-send", "production-inbox-test", "batch-preview", "batch-run", "batch-resolve-email", "shared-email-review", "shared-email-approve", "shared-email-migrate-journal")
+COMMANDS = ("production-schema", "production-headers", "production-init-headers", "production-prepare-special", "production-inspect", "production-render-test", "production-single-send", "production-inbox-test", "batch-preview", "batch-run", "batch-resolve-email", "shared-email-review", "shared-email-approve", "shared-email-migrate-journal")
 
 
 def batch_limit(value):
@@ -41,13 +42,18 @@ def register(commands):
     single.add_argument("--selection", type=Path, required=True, help="Private selection path within production runtime")
     single.add_argument("--authorize-send", action="store_true", help="Required for apply/retry; EMAIL_ENABLED must also be true")
     controlled = commands.add_parser("production-render-test", help="One explicit no-email rendering test with guarded restoration; general production stays locked")
-    controlled.add_argument("--source", choices=("regular", "discount_15", "discount_10"))
+    controlled.add_argument("--source", choices=SOURCES)
     controlled.add_argument("--row", type=int, help="Temporary locator; preparation binds exact source/form/approval/tracking values")
     controlled.add_argument("--selection", type=Path, help="Private prepared selection file within production runtime")
     controlled.add_argument("--apply", action="store_true", help="Execute exactly the selected registration, verify and clean up")
     controlled.add_argument("--recover", type=Path, help="Cleanup only from this controlled test's private audit; never rerender")
     commands.add_parser("production-schema", help="Local-only proposal for production tracking columns")
     commands.add_parser("production-headers", help="Read only production tab metadata and headers; never participant rows")
+    special = commands.add_parser('production-prepare-special', help='Prepare private four-source candidates without switching configuration')
+    special_mode = special.add_mutually_exclusive_group(required=True)
+    special_mode.add_argument('--draft', action='store_true', help='Local-only draft; cannot initialize headers')
+    special_mode.add_argument('--audit', action='store_true', help='Verify all four live header rows and blank special tracking destination; no Sheet writes')
+    special.add_argument('--out-directory', type=Path, help='Private directory under runtime-production/source-candidates')
     audit = commands.add_parser("production-inspect", help="Read only approved name/email/tier/approval/status columns; print aggregates only")
     audit.add_argument("--plan", type=Path, help="Private reviewed source/header snapshot; uses the approved initialization plan by default")
     initialize = commands.add_parser("production-init-headers", help="Revalidate the approved row-one plan; participant operations stay locked")
@@ -59,7 +65,7 @@ def register(commands):
     mode.add_argument("--live", action="store_true", help="Explicitly read real participant details; no Sheet writes or email")
     selection = inspect.add_mutually_exclusive_group(required=True)
     selection.add_argument("--id", dest="ids", action="append", help="Repeat for an exact list; source:R-ID, P-ID, or source:row:N")
-    selection.add_argument("--source", choices=("regular", "discount_15", "discount_10"))
+    selection.add_argument("--source", choices=SOURCES)
     selection.add_argument("--all", dest="all_sources", action="store_true", help="Select all sources; does not remove the attempt limit")
     inspect.add_argument("--start-row", type=physical_row, help="Inclusive physical row; requires --source and --end-row")
     inspect.add_argument("--end-row", type=physical_row, help="Inclusive physical row; requires --source and --start-row")
@@ -102,10 +108,10 @@ def register(commands):
     resolve.add_argument("--fixture", type=Path)
     resolve.add_argument("--state-out", type=Path)
     review = commands.add_parser("shared-email-review", help="Read-only review of exact registrations proposed to share one delivery email; never prints names/emails")
-    review.add_argument("--source", choices=("regular", "discount_15", "discount_10"), required=True)
+    review.add_argument("--source", choices=SOURCES, required=True)
     review.add_argument("--rows", type=physical_row, nargs="+", required=True, metavar="ROW")
     approve = commands.add_parser("shared-email-approve", help="Privately approve an exact reviewed group after explicit staff confirmations")
-    approve.add_argument("--source", choices=("regular", "discount_15", "discount_10"), required=True)
+    approve.add_argument("--source", choices=SOURCES, required=True)
     approve.add_argument("--rows", type=physical_row, nargs="+", required=True, metavar="ROW")
     approve.add_argument("--review-sha256", required=True)
     approve.add_argument("--confirm-distinct-attendees", action="store_true", required=True)
@@ -135,6 +141,9 @@ def run(settings, args):
         return run_command(settings, args)
     if not settings.event_id:
         raise ConfigurationError("Set a separate permanent production EVENT_ID locally before preparing batches.")
+    if args.command == 'production-prepare-special':
+        from .special_source import run_command
+        return run_command(settings, args)
     if args.command in ("shared-email-review", "shared-email-approve"):
         from .shared_email import approvals_path, review_members, save_approval
         sheet = ProductionSheets(settings, writable=False)

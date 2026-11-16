@@ -12,6 +12,7 @@ import qrcode
 from PIL import Image, ImageFont
 
 from .config import private_directory
+from .tiers import TICKET_TIERS
 
 NAME_LIMIT = 160
 GOOGLE_SANS_DIR = Path(__file__).resolve().parent.parent / "templates/fonts/google-sans"
@@ -182,8 +183,8 @@ class CardRenderer:
                     raise RenderError("The configured tier field is not declared in this template.")
                 if not field_is_bound(template, s.tier_field, s.frame):
                     raise RenderError("The configured tier field is declared but no text binds it in this frame.")
-                if ticket_tier not in ("Lite", "Regular", "Pro"):
-                    raise RenderError("Choose ticket tier Lite, Regular or Pro.")
+                if ticket_tier not in TICKET_TIERS:
+                    raise RenderError("Choose a supported ticket tier.")
             values = render_values(template, s.name_field, name, participant_id, s.tier_field, ticket_tier)
             values_path = temp / "values.json"
             values_path.write_text(json.dumps(values, ensure_ascii=False))

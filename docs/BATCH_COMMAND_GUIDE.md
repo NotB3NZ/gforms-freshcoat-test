@@ -151,6 +151,13 @@ For a verified failed original row 5, after activation and enabled email:
 
 Targeted retry leaves other unfinished entries untouched and reuses the same
 identity and Message-ID. `--retry` cannot release an uncertain submission.
+With `--retry`, a non-target entry may have changed form details only when its
+completed action, frozen identity, original plan/authorization binding and
+durable `ACCEPTED` receipt/event all verify against the local journal. That
+entry receives no tracking writes or SMTP submission. All sources still undergo
+schema checks and contribute their current rows to duplicate checks; each retry
+target still requires current approvals, unchanged identity and verified failed,
+known-unsent history. Ordinary plan review/resume retains its stale-detail checks.
 
 For an existing acceptance receipt, or provider-confirmed acceptance of an
 uncertain original attempt, first deactivate and disable email. Record the
@@ -197,7 +204,7 @@ records. Keep `EMAIL_ENABLED=false`; install Bun/FreshCoat for fixture rendering
 | --- | --- |
 | One permanent registration ID | `--id regular:R-SYN-REG-002` |
 | Several permanent IDs | Repeat `--id SOURCE:R-ID` |
-| One source | `--source regular`, `discount_15`, or `discount_10` |
+| One source | `--source regular`, `discount_15`, `discount_10`, or optional configured `special` |
 | All three sources | `--all` |
 | An inclusive row range in one source | `--source discount_15 --start-row 10 --end-row 13` |
 

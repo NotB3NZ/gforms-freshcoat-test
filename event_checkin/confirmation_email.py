@@ -12,6 +12,7 @@ from PIL import Image
 
 from .config import ROOT
 from .mailer import EmailNotSent
+from .tiers import TICKET_TIERS
 
 TEMPLATE = ROOT / "templates/email/registration-confirmation.html"
 SUBJECT = "Registration confirmed: AWS Student Community Day Mindanao 2026"
@@ -74,8 +75,8 @@ def build_confirmation_message(recipient, name, participant_id, card_path, messa
         Address(addr_spec=recipient)
     except (ValueError, IndexError):
         raise MessageBuildError("One frozen recipient address is required.") from None
-    if ticket_tier not in ("Lite", "Regular", "Pro"):
-        raise MessageBuildError("The issued tier must be Lite, Regular or Pro.")
+    if ticket_tier not in TICKET_TIERS:
+        raise MessageBuildError("The issued tier must be a supported ticket label.")
     if not isinstance(participant_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", participant_id):
         raise MessageBuildError("A valid issued participant ID is required.")
     if not isinstance(message_id, str) or not re.fullmatch(r"<[^\s<>@]+@[^\s<>@]+>", message_id):

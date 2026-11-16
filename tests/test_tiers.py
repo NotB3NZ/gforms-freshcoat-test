@@ -53,7 +53,8 @@ class TierAliasTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_exactly_eight_approved_source_specific_aliases(self):
-        actual = {(source, label, tier) for source, aliases in APPROVED_TIER_ALIASES.items() for label, tier in aliases.items()}
+        actual = {(source, label, tier) for source, aliases in APPROVED_TIER_ALIASES.items()
+                  if source in CATEGORIES for label, tier in aliases.items()}
         self.assertEqual(actual, set(APPROVED))
         for source, label, tier in APPROVED:
             with self.subTest(source=source, label=label):

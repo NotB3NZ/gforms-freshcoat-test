@@ -10,7 +10,7 @@ from gspread.utils import a1_range_to_grid_range
 
 from event_checkin.production import digest, private_json
 from event_checkin.production_sheets import PRODUCTION_METADATA, source_mapping, column_number
-from event_checkin.header_init import APPROVED_RANGES, EVENT_ID
+from event_checkin.header_init import SOURCE_RANGES, EVENT_ID
 from event_checkin import pilot
 
 
@@ -27,19 +27,21 @@ class FakeClock:
 
 
 class SheetsAPI:
-    def __init__(self, fixture, clock):
+    def __init__(self, fixture, clock, *, sources=None):
         self.f, self.clock, self.calls = fixture, clock, []
         self.hook = None
         self.headers = {}
-        self.sources = json.loads((Path(__file__).resolve().parents[1]/'config/sources.production.example.json').read_text())['sources']
+        self.sources = deepcopy(sources) if sources is not None else json.loads((Path(__file__).resolve().parents[1]/'config/sources.production.example.json').read_text())['sources']
         fixture.s.service_account = fixture.s.root/'synthetic-credentials.json'
         fixture.s.service_account.write_text('{}')
         self.entries = []
         for source in self.sources:
             source['spreadsheet_id'] = 'synthetic-' + source['id']
-            count, span = APPROVED_RANGES[source['id']]
+            count, span = SOURCE_RANGES[source['id']]
             headers = ['Synthetic question ' + str(i) for i in range(count)]
             for label, col in source_mapping(source).values(): headers[column_number(col)-1] = label
+            for label, columns in source.get('approved_duplicate_headers', {}).items():
+                for col in columns: headers[column_number(col)-1] = label
             self.entries.append({'source': source, 'range': span, 'original_headers': headers})
         self.plan = {'version': 1, 'event_id': EVENT_ID, 'headers': list(PRODUCTION_METADATA), 'sources': self.entries}
         fixture.s.sources_file.write_text(json.dumps({'version': 1, 'sources': self.sources}))

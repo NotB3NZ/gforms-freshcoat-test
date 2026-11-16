@@ -121,6 +121,23 @@ def bound_row(settings, plan, entry, rows):
     return row, action, receipt
 
 
+def completed_outside_retry(settings, plan, entry, rows, retry_target, *, evidence=None):
+    """Excuse stale form details only for a verified, untouched completed peer."""
+    if not retry_target or entry['target'] == retry_target:
+        return None
+    action, receipt, _ = existing(settings, plan, entry)
+    if not (action and action[2] and receipt and receipt[0] == 'ACCEPTED'):
+        return None
+    matches = [r for r in rows if (r.source_id, r.number) == (entry['source'], entry['snapshot_row'])]
+    require(len(matches) == 1, 'Completed retry peer changed or moved; review required.')
+    row = matches[0]
+    require((row.get('record_id'), row.get('message_id')) == action[:2]
+            and receipt[1] == issued_identity(row), 'Completed retry peer identity differs from its durable action.')
+    delivery = (evidence or DeliveryEvidence(settings)).inspect(row, completed_entry=(plan['plan_id'], entry['target']))
+    require(delivery.accepted and not delivery.blockers, 'Completed retry peer acceptance binding requires staff review.')
+    return row, action, receipt
+
+
 def classify_recovery(settings, plan, entry, rows):
     """Use persisted job/identity/delivery evidence, never an action alone.
 
@@ -235,6 +252,7 @@ class PilotReader(LiveTestSheet):
         # receives the actual scoped settings and rechecks the private flag.
         super().__init__(replace(settings, email_enabled=False), read_scheduler=read_scheduler, reviewed_reads=True)
         self.dataset = self.reader.dataset
+        self.source_order = self.reader.source_order
 
     def rows(self):
         return verified_rows(self.settings, self.reader.rows())  # Fresh schema + the same verified approvals for every gate.
@@ -281,8 +299,9 @@ class PilotSettings:
 
 class PilotSheet:
     """All-source reads and exact selected-row metadata writes only."""
-    def __init__(self, settings, plan, reader, write_transport=None):
+    def __init__(self, settings, plan, reader, write_transport=None, *, retry_target=None):
         self.settings, self.plan, self.reader, self.transport = settings, plan, reader, write_transport
+        self.retry_target = retry_target
         self.live, self.dataset = reader.live, reader.dataset
         self.http = None
 
@@ -291,21 +310,27 @@ class PilotSheet:
 
     def rows(self):
         rows = verified_rows(self.settings, self.reader.rows())
-        for entry in self.plan['entries']:
-            bound_row(self.settings, self.plan, entry, rows)
+        self.validate_rows(rows)
         return rows
+
+    def validate_rows(self, rows):
+        evidence = DeliveryEvidence(self.settings) if self.retry_target else None
+        for entry in self.plan['entries']:
+            if not completed_outside_retry(self.settings, self.plan, entry, rows, self.retry_target, evidence=evidence):
+                bound_row(self.settings, self.plan, entry, rows)
 
     def update(self, row, changes):
         self.require_write()
         entries = [e for e in self.plan['entries'] if (e['source'], e['snapshot_row']) == (row.source_id, row.number)]
         require(len(entries) == 1 and changes and set(changes) <= WRITE_FIELDS,
                 'Batch may write only its saved selected registrations and approved tracking fields.')
+        require(not self.retry_target or entries[0]['target'] == self.retry_target,
+                'Targeted retry may write only its explicit target.')
         read_for_update = getattr(self.reader, 'read_for_update', None)
         if callable(read_for_update):
             rows, snapshot = read_for_update(row.source_id, row.number)
             rows = verified_rows(self.settings, rows)
-            for entry in self.plan['entries']:
-                bound_row(self.settings, self.plan, entry, rows)
+            self.validate_rows(rows)
             fresh, _, _ = bound_row(self.settings, self.plan, entries[0], rows)
             require(fresh.data == row.data, 'Pilot registration changed before its tracking update.')
         else:
@@ -488,17 +513,26 @@ def verify_ticket_message(settings, row, mailer, message, address, name, pid, ca
     require(message_signature(message) == message_signature(expected), 'Pilot MIME content differs from frozen ticket data.')
 
 
-def inspect_pilot(settings, path, *, reader=None, authorization=None):
+def inspect_pilot(settings, path, *, reader=None, authorization=None, retry_target=None):
     plan, policy = load_binding(settings, path, authorization)
+    require(not retry_target or retry_target in [e['target'] for e in plan['entries']],
+            'Retry must name one original pilot target.')
     inspect_template(settings)
     google_sans_files()
     reader = reader or PilotReader(settings)
     require(reader.live is True and reader.dataset == plan['dataset'], 'Pilot source dataset differs from its saved plan.')
     rows = verified_rows(settings, reader.rows())
+    evidence = DeliveryEvidence(settings) if retry_target else None
     entries = []
     for entry in plan['entries']:
         scoped = PilotSettings(settings, path, policy, mode='inspect', authorization=authorization)
-        row, action, receipt, status = classify_recovery(scoped, plan, entry, rows)
+        completed = completed_outside_retry(scoped, plan, entry, rows, retry_target, evidence=evidence)
+        if completed:
+            row, action, receipt = completed
+            status = {'registration_phase': 'ISSUED', 'eligibility_action': 'send', 'retry_required': False,
+                      'recovery': 'COMPLETED', 'identity_reserved': True, 'issued': True, 'blockers': []}
+        else:
+            row, action, receipt, status = classify_recovery(scoped, plan, entry, rows)
         blocked = status['blockers'] + (['failed job requires explicit retry'] if status['retry_required'] else [])
         entries.append({'target': entry['target'], 'completed': bool(action and action[2]),
                         'delivery': receipt[0] if receipt else 'NO_INTENT',
@@ -518,15 +552,17 @@ def execute(settings, path, *, retry_target=None, first_sends_only=False, reader
     require(not first_sends_only or not retry_target, 'Remaining first sends cannot be combined with a targeted retry.')
     require(not retry_target or retry_target in [e['target'] for e in plan['entries']], 'Retry must name one original pilot target.')
     reader = reader or PilotReader(settings)
-    report = inspect_pilot(settings, path, reader=reader, authorization=authorization)
+    report = inspect_pilot(settings, path, reader=reader, authorization=authorization, retry_target=retry_target)
     require(not any(e['recovery'] == 'ALREADY_SENT' for e in report['entries']),
             'Saved plan includes an already accepted delivery from another path; create a fresh preview.')
     require(all(not e['blockers'] for e in report['entries'] if not e['issued']),
             'Eligibility or unverified initialization history blocks the selected pilot registrations.')
     if retry_target:
         selected = next(e for e in report['entries'] if e['target'] == retry_target)
-        require(selected['retry_required'], 'Explicit retry requires a verified failed pilot job, never a reservation or uncertain delivery.')
-    sheet = PilotSheet(scoped, plan, reader, write_transport)
+        require(selected['retry_required'] and not [b for b in selected['blockers']
+                                                   if b != 'failed job requires explicit retry'],
+                'Explicit retry requires an eligible verified failed pilot job, never a reservation or uncertain delivery.')
+    sheet = PilotSheet(scoped, plan, reader, write_transport, retry_target=retry_target)
     require(sheet.live is True and sheet.dataset == plan['dataset'], 'Pilot adapter differs from the saved plan.')
     processor = PilotProcessor(scoped, sheet, renderer or CardRenderer(settings), None, plan=plan,
                                retry_target=retry_target, first_sends_only=first_sends_only)

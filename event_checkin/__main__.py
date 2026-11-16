@@ -8,6 +8,7 @@ from .locking import file_lock
 from .mailer import SMTPMailer
 from .sheets import GoogleSheet
 from .worker import Worker
+from .tiers import TICKET_TIERS
 
 
 def main():
@@ -20,7 +21,7 @@ def main():
     commands.add_parser("profile-info", help="Show non-secret profile paths and readiness; no account access")
     commands.add_parser("check-template", help="Inspect bindings and QR placement without account access")
     preview = commands.add_parser("preview", help="Render the actual template with a clearly fake QR; sends no email")
-    preview.add_argument("--tier", choices=("Lite", "Regular", "Pro"), default=None,
+    preview.add_argument("--tier", choices=TICKET_TIERS, default=None,
                          help="Preview-only tier value for templates declaring CARD_TIER_FIELD")
     commands.add_parser("check-config", help="Validate local Sheet settings without connecting to Google")
     commands.add_parser("check-sheet", help="Read-only connection/header check; never prints row contents")
