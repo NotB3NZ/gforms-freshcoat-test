@@ -20,3 +20,11 @@ config/pilot-resend.approved.json
 config/batch-authorizations/
 runtime-production/
 generated-production/
+
+# Staff web application private local configuration and runtime.
+!.env.web.example
+.web-runtime/
+frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+frontend/dist/

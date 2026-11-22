@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: freshcoat
+      POSTGRES_USER: freshcoat
+      POSTGRES_PASSWORD: ${WEB_POSTGRES_PASSWORD:?Set a private local database password}
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - freshcoat_web_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U freshcoat -d freshcoat"]
+      interval: 5s
+      retries: 10
+volumes:
+  freshcoat_web_db:

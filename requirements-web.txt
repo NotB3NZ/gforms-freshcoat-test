@@ -1,0 +1,5 @@
+# Separate environment: never change the working email tool environment.
+-r requirements.txt
+SQLAlchemy==2.0.46
+psycopg[binary]==3.2.12
+httpx==0.28.1
