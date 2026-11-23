@@ -4,6 +4,10 @@ This is a separate local application in the existing repository. It does not inv
 
 ## Start a synthetic local application
 
+To look up already-issued real tickets without admitting anyone, use the separate
+[read-only registration preview](WEB_PREVIEW.md). The synthetic demo below only
+contains development participants and will not recognize real issued tickets.
+
 Run from the repository root. Python 3.12+ and Node 20+ are recommended. Keep the working email environment unchanged.
 
 ```sh

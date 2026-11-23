@@ -16,11 +16,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from .adapters import adapter
 from .db import Database, one
 from .security import digest, verify_password
-from .service import AdmissionService, Conflict, NotReady
+from .service import AdmissionService, Conflict, NotReady, PreviewReadOnly
 from .settings import ROOT, WebSettings
 from .sync import Synchronizer
 
 COOKIE = "freshcoat_staff"
+
+
+def cookie_name(settings):
+    # Cookies are shared across ports on localhost. Keep preview/demo logins separate.
+    return "freshcoat_preview_staff" if settings.read_only_preview else COOKIE
 
 
 class Input(BaseModel):
@@ -73,6 +78,8 @@ def create_app(settings=None, sheets=None, *, background=True):
     async def security(request, call_next):
         s = getattr(app.state, "settings", None)
         if s:
+            if s.read_only_preview and request.client and request.client.host not in ("127.0.0.1", "::1", "testclient"):
+                return JSONResponse({"detail": "Preview accepts local connections only."}, status_code=403)
             if request.headers.get("host") != urlsplit(s.origin).netloc:
                 return JSONResponse({"detail": "Use the configured WEB_ORIGIN address."}, status_code=400)
             if request.method not in ("GET", "HEAD", "OPTIONS"):
@@ -95,7 +102,7 @@ def create_app(settings=None, sheets=None, *, background=True):
         return response
 
     def session(request: Request):
-        cookie = request.cookies.get(COOKIE, "")
+        cookie = request.cookies.get(cookie_name(app.state.settings), "")
         if not cookie or len(cookie) > 128:
             raise HTTPException(401, "Sign in to continue.")
         with app.state.db.transaction() as conn:
@@ -123,6 +130,10 @@ def create_app(settings=None, sheets=None, *, background=True):
     async def not_ready(request, error):
         return JSONResponse({"detail": str(error)}, status_code=409)
 
+    @app.exception_handler(PreviewReadOnly)
+    async def preview_read_only(request, error):
+        return JSONResponse({"detail": str(error)}, status_code=403)
+
     @app.get("/api/session")
     def identity(request: Request):
         try:
@@ -132,7 +143,8 @@ def create_app(settings=None, sheets=None, *, background=True):
                 return {"authenticated": False}
             raise
         return {"authenticated": True, "nickname": staff["nickname"], "csrf": staff["csrf"],
-                "expires_at": staff["expires_at"], "event_id": app.state.settings.event_id}
+                "expires_at": staff["expires_at"], "event_id": app.state.settings.event_id,
+                "read_only_preview": app.state.settings.read_only_preview, "mode": app.state.settings.mode}
 
     @app.post("/api/login")
     def login(body: Login, request: Request, response: Response):
@@ -153,13 +165,15 @@ def create_app(settings=None, sheets=None, *, background=True):
         expiry = now + app.state.settings.session_seconds
         with app.state.db.transaction() as conn:
             # A fresh login invalidates this browser's old session.
-            old = request.cookies.get(COOKIE)
+            old = request.cookies.get(cookie_name(app.state.settings))
             if old:
                 conn.execute(text("UPDATE staff_sessions SET revoked=1 WHERE cookie_digest=:h"), {"h": digest(old)})
             conn.execute(text("INSERT INTO staff_sessions VALUES(:s,:h,:c,'',:t,:x,0)"), {"s": sid, "h": digest(cookie), "c": csrf, "t": now, "x": expiry})
-        response.set_cookie(COOKIE, cookie, httponly=True, secure=app.state.settings.secure_cookie,
+        response.set_cookie(cookie_name(app.state.settings), cookie, httponly=True, secure=app.state.settings.secure_cookie,
                             samesite="strict", max_age=app.state.settings.session_seconds, path="/")
-        return {"authenticated": True, "nickname": "", "csrf": csrf, "expires_at": expiry, "event_id": app.state.settings.event_id}
+        return {"authenticated": True, "nickname": "", "csrf": csrf, "expires_at": expiry,
+                "event_id": app.state.settings.event_id, "read_only_preview": app.state.settings.read_only_preview,
+                "mode": app.state.settings.mode}
 
     @app.post("/api/nickname")
     def nickname(body: Nickname, staff=Depends(session)):
@@ -177,7 +191,7 @@ def create_app(settings=None, sheets=None, *, background=True):
     def logout(response: Response, staff=Depends(session)):
         with app.state.db.transaction() as conn:
             conn.execute(text("UPDATE staff_sessions SET revoked=1 WHERE session_id=:s"), {"s": staff["session_id"]})
-        response.delete_cookie(COOKIE, path="/", secure=app.state.settings.secure_cookie, httponly=True, samesite="strict")
+        response.delete_cookie(cookie_name(app.state.settings), path="/", secure=app.state.settings.secure_cookie, httponly=True, samesite="strict")
         return {"status": "signed_out"}
 
     @app.post("/api/lookup")

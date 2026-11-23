@@ -26,6 +26,10 @@ class NotReady(ValueError):
     pass
 
 
+class PreviewReadOnly(PermissionError):
+    pass
+
+
 def sheet_time(value):
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -75,6 +79,8 @@ class AdmissionService:
             return {"status": "found", "participant": self.participant(conn, row["participant_id"])}
 
     def confirm(self, participant_id, request_id, method, session):
+        if self.s.read_only_preview:
+            raise PreviewReadOnly("Read-only preview: attendance cannot be changed.")
         e = self.s.event_id
         # The database event row serializes short decisions across all processes.
         # No Google calls or local process/file locks occur in this transaction.
@@ -176,6 +182,8 @@ class AdmissionService:
         return {"registrations": len(prepared), "omitted_without_event_or_stable_id": omitted}
 
     def open_admissions(self):
+        if self.s.read_only_preview:
+            raise PreviewReadOnly("Read-only preview: admissions cannot be opened.")
         with self.db.transaction(self.s.event_id) as conn:
             state = one(conn, "SELECT * FROM sync_state WHERE event_id=:e", e=self.s.event_id)
             if not state["last_success"] or state["error"]:
@@ -212,7 +220,9 @@ class AdmissionService:
                             "WHERE p.event_id=:e AND a.checked_in_at IS NOT NULL ORDER BY a.checked_in_at DESC LIMIT 30", **params)
             state = one(conn, "SELECT last_success,last_attempt,error,export_error,omitted,lease_until FROM sync_state WHERE event_id=:e", **params)
             state["pending_exports"] = one(conn, "SELECT COUNT(*) AS n FROM outbox WHERE event_id=:e AND delivered_at IS NULL", **params)["n"]
-            return dict(counts=counts, activity=activity, sync=state, admissions_open=event_open(conn, self.s.event_id),
+            return dict(counts=counts, activity=activity, sync=state,
+                        admissions_open=not self.s.read_only_preview and event_open(conn, self.s.event_id),
+                        read_only_preview=self.s.read_only_preview, mode=self.s.mode,
                         timezone=self.s.timezone, event_id=self.s.event_id, synthetic=self.s.synthetic, server_time=time.time(), tiers=TICKET_TIERS)
 
 

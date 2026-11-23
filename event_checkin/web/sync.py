@@ -48,6 +48,8 @@ class Synchronizer:
             conn.execute(text("UPDATE sync_state SET lease_owner='',lease_until=0 WHERE event_id=:e AND lease_owner=:o"), {"e": self.s.event_id, "o": owner})
 
     def export(self, owner):
+        if self.s.read_only_preview:
+            return
         with self.db.transaction() as conn:
             lease = one(conn, "SELECT * FROM sync_state WHERE event_id=:e", e=self.s.event_id)
             if lease["lease_owner"] != owner or lease["lease_until"] < time.time():

@@ -54,6 +54,14 @@ class Database:
                     if statement.strip():
                         conn.execute(text(statement))
                 conn.execute(text("INSERT INTO schema_migrations VALUES(:v)"), {"v": path.name})
+            profile = one(conn, "SELECT mode FROM web_database_mode WHERE id=1")
+            if profile and profile["mode"] != settings.mode:
+                raise ValueError("Database belongs to a different data mode. Use a separate database; do not reuse demo or preview attendance.")
+            if not profile:
+                if settings.read_only_preview and any(one(conn, "SELECT COUNT(*) AS n FROM " + table)["n"]
+                                                       for table in ("events", "participants", "attendance", "requests", "outbox", "staff_sessions")):
+                    raise ValueError("Read-only preview requires a fresh, separate database.")
+                conn.execute(text("INSERT INTO web_database_mode(id,mode) VALUES(1,:mode)"), {"mode": settings.mode})
             for row in many(conn, "SELECT event_id,participant_id,name,email FROM participants WHERE search_text=''"):
                 conn.execute(text("UPDATE participants SET search_text=:q WHERE event_id=:e AND participant_id=:p"),
                              {"q": unicodedata.normalize("NFKC", row["name"] + " " + row["email"]).casefold(),

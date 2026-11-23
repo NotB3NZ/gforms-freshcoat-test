@@ -1,11 +1,23 @@
 import {CameraScanner, imageFrame} from './camera.js';
 import {PendingAttempt} from './pending.js';
+import {participantReview} from './review.js';
 
 const $ = id => document.getElementById(id);
 let identity = null, pendingStore = null, current = null, method = 'qr', view = 'scan';
 let pending = null, submissionBusy = false, modalBusy = false, lastFocus = null;
 let dashboard = null, offset = 0, searchGeneration = 0, busyLookup = false, resumeCamera = false;
 let dashboardBusy = false, lastConnected = null, timeZone = 'Asia/Manila';
+const readOnly = () => identity?.read_only_preview === true;
+
+function showDataMode() {
+  const preview = readOnly();
+  $('preview-banner').hidden = !preview;
+  $('demo-label').hidden = identity?.mode === 'live';
+  text('demo-label', preview ? 'Real registrations · Read-only preview' : 'Synthetic demo');
+  text('scan-description', preview ? 'Scan an issued ticket to verify the registration. Attendance changes are disabled.' : 'Review the participant, then confirm their arrival.');
+  text('review-instruction', preview ? 'Review the matched registration. Check-in is disabled in preview.' : 'Select Check in to record arrival.');
+  text('sync-footnote', preview ? 'Reads real registrations only. This preview never exports attendance or sends email.' : 'Registration changes take effect after a successful sync. Confirmed arrivals are saved immediately.');
+}
 
 function text(id, value) { $(id).textContent = value; }
 function node(tag, value, className = '') { const n = document.createElement(tag); n.textContent = value; n.className = className; return n; }
@@ -17,7 +29,10 @@ function status(p) { return p.checked_in_at != null ? 'Checked in' : p.eligible 
 function connection(ok, message = '') {
   if (ok) lastConnected = Date.now();
   $('connection').classList.toggle('error', !ok);
-  text('connection', ok ? `Backend connected · Updated ${new Date(lastConnected).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}` : `Backend unavailable · ${lastConnected ? 'Showing stale data. ' : ''}${message || 'Reconnect before confirming attendance.'}`);
+  const source = readOnly() ? 'Real registration preview'
+    : identity?.mode === 'synthetic' || dashboard?.synthetic === true ? 'Demo data'
+    : identity?.mode === 'live' || dashboard?.synthetic === false ? 'Live event' : 'Data source loading';
+  text('connection', ok ? `Backend connected · ${source} · Updated ${new Date(lastConnected).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}` : `Backend unavailable · ${lastConnected ? 'Showing stale data. ' : ''}${message || 'Reconnect before confirming attendance.'}`);
 }
 async function api(path, body, options = {}) {
   const controller = new AbortController();
@@ -66,6 +81,7 @@ const scanner = new CameraScanner({video: $('video'), mediaDevices: navigator.me
 });
 function stopCamera() { scanner.stop(); }
 function ensureNoPending() {
+  if (readOnly()) return true;
   if (!pendingStore) {
     const message = 'Enable site storage and refresh before checking in. This browser must retain a pending request safely.';
     text('camera-message', message); text('participants-message', message); return false;
@@ -106,7 +122,8 @@ async function enter() {
   $('login').hidden = true;
   $('workspace').hidden = false;
   text('staff-name', `Signed in as ${identity.nickname}`);
-  try { pendingStore = new PendingAttempt(localStorage, identity.event_id, location.origin); }
+  showDataMode(); pending = null;
+  try { pendingStore = readOnly() ? null : new PendingAttempt(localStorage, identity.event_id, location.origin); }
   catch { pendingStore = null; }
   navigate('scan');
   await refreshDashboard();
@@ -185,12 +202,10 @@ function showParticipant(p, sourceMethod) {
   current = p; method = sourceMethod;
   openDialog(); text('review-eyebrow', sourceMethod === 'qr' ? 'QR · PARTICIPANT REVIEW' : 'MANUAL · PARTICIPANT REVIEW');
   text('review-title', p.name); text('review-email', p.email); details(p);
-  let message = 'Eligible ticket · Not yet arrived. Confirm their arrival below.';
-  if (p.checked_in_at != null) message = `Already checked in at ${stamp(p.checked_in_at)} by ${p.checked_in_by}`;
-  else if (!p.eligible) message = `Cannot check in · ${p.reason}`;
-  text('review-status', message); $('review-status').className = 'review-status' + (!p.eligible ? ' invalid' : '');
-  $('confirm').hidden = false; $('confirm').disabled = !p.eligible || p.checked_in_at != null || Boolean(pending);
-  text('confirm', 'Check in'); $('cancel').disabled = false; text('cancel', 'Cancel / Scan another');
+  const review = participantReview(p, {readOnly: readOnly(), pending: Boolean(pending), stamp});
+  text('review-status', review.message); $('review-status').className = 'review-status' + (!p.eligible ? ' invalid' : '');
+  $('confirm').hidden = false; $('confirm').disabled = review.disabled;
+  text('confirm', review.label); $('cancel').disabled = false; text('cancel', readOnly() ? 'Close / Scan another' : 'Cancel / Scan another');
 }
 function restoreFocus() {
   if (!identity?.nickname) { $('password').focus(); return; }
@@ -224,6 +239,7 @@ function finish(result) {
   text('review-error', ''); refreshDashboard(); if (view === 'participants') loadParticipants();
 }
 async function reconcileAndSubmit() {
+  if (readOnly()) return;
   if (!pending || submissionBusy) return;
   submissionBusy = true; $('confirm').disabled = true; $('cancel').disabled = true; text('confirm', 'Checking in…');
   try {
@@ -242,6 +258,7 @@ async function reconcileAndSubmit() {
   } finally { submissionBusy = false; }
 }
 $('confirm').onclick = async () => {
+  if (readOnly()) return;
   if (submissionBusy || modalBusy) return;
   if (!pending) {
     if (!current?.eligible || current.checked_in_at != null) return;
@@ -251,6 +268,7 @@ $('confirm').onclick = async () => {
   await reconcileAndSubmit();
 };
 async function openPending() {
+  if (readOnly()) return;
   if (modalBusy || submissionBusy) return;
   modalBusy = true; stopCamera();
   try {
@@ -311,9 +329,9 @@ async function refreshDashboard() {
     const data = await api('dashboard');
     if (!identity?.nickname) return;
     dashboard = data; timeZone = data.timezone; connection(true);
-    $('demo-label').hidden = !data.synthetic;
+    showDataMode();
     for (const key of ['eligible', 'arrived', 'waiting']) text(`${key}-count`, data.counts[key]);
-    text('sync-status', data.sync.last_success ? `Last successful registration sync: ${stamp(data.sync.last_success)}` : 'No successful registration sync yet. Admissions require initial reconciliation.');
+    text('sync-status', data.sync.last_success ? `Last successful registration sync: ${stamp(data.sync.last_success)}` : readOnly() ? 'No real registrations imported yet. Check source configuration and sync status.' : 'No successful registration sync yet. Admissions require initial reconciliation.');
     const age = data.sync.last_success ? Math.max(0, Math.round(data.server_time - data.sync.last_success)) : null;
     text('sync-details', `${data.admissions_open ? 'Admissions open' : 'Admissions closed'} · ${data.sync.pending_exports} attendance updates pending${age != null ? ` · Registration snapshot ${age}s old` : ''}${data.sync.omitted ? ` · ${data.sync.omitted} rows without this event/stable ID omitted` : ''}`);
     text('sync-error', [data.sync.error, data.sync.export_error, age > 120 ? 'Registration data is stale. Check synchronization before relying on recent approvals or cancellations.' : ''].filter(Boolean).join(' '));

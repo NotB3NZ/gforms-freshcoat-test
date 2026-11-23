@@ -6,6 +6,9 @@ This project connects Google Form response Sheets to personalized FreshCoat card
 
 ## Staff web application (synthetic local development)
 
+For existing issued tickets, use the [local read-only registration preview](docs/WEB_PREVIEW.md).
+It imports real registrations for lookup while blocking admissions and Sheets exports.
+
 The separate [FreshCoat staff web app](docs/WEB_APP.md) adds password/nickname login,
 QR/manual review and confirmation, a shared attendance database, staff dashboard,
 and durable background attendance export. Start with the guide's isolated environment,

@@ -52,9 +52,10 @@
       </header>
       <main id="main" tabindex="-1">
         <div id="connection" role="status" class="connection">Connecting to backend…</div>
+        <p id="preview-banner" class="panel muted" role="status" hidden>Read-only preview of real registrations. Scan or search to verify a ticket; attendance changes are disabled.</p>
         <div id="pending-banner" class="notice" role="alert" hidden>One check-in is unresolved. Retry it before continuing. <button id="pending-open">Review pending check-in</button></div>
         <section id="scan-view">
-          <div class="section-heading"><div><p class="eyebrow">WELCOME THEM IN</p><h1>Scan a ticket</h1><p>Review the participant, then confirm their arrival.</p></div></div>
+          <div class="section-heading"><div><p class="eyebrow">WELCOME THEM IN</p><h1>Scan a ticket</h1><p id="scan-description">Review the participant, then confirm their arrival.</p></div></div>
           <div class="scan-grid">
             <section class="panel camera-panel" aria-labelledby="camera-title">
               <div class="panel-heading"><h2 id="camera-title">Ticket scanner</h2><span id="camera-state" class="badge">Camera off</span></div>
@@ -64,7 +65,7 @@
               <div class="camera-choice"><label for="camera-select">Camera</label><select id="camera-select"><option value="">Rear camera (preferred)</option></select></div>
               <div class="file-control"><label for="qr-file">Scan a QR image instead</label><input type="file" id="qr-file" accept="image/png,image/jpeg,image/webp"><small>For a saved ticket or a development QR fixture.</small></div>
             </section>
-            <aside class="scan-aside"><section class="panel"><p class="eyebrow">A QUICK REMINDER</p><h2>Scan. Review. Welcome.</h2><ol class="steps"><li>Hold one ticket steady.</li><li>Check the name and ticket status.</li><li>Select <strong>Check in</strong> to record arrival.</li></ol><p class="muted">Scanning alone never records attendance.</p></section><section class="panel manual-callout"><h2>Can’t scan the ticket?</h2><p>Find a participant by their name or email.</p><button id="manual-search" class="wide">Search participants</button></section></aside>
+            <aside class="scan-aside"><section class="panel"><p class="eyebrow">A QUICK REMINDER</p><h2>Scan. Review. Welcome.</h2><ol class="steps"><li>Hold one ticket steady.</li><li>Check the name and ticket status.</li><li id="review-instruction">Select <strong>Check in</strong> to record arrival.</li></ol><p class="muted">Scanning alone never records attendance.</p></section><section class="panel manual-callout"><h2>Can’t scan the ticket?</h2><p>Find a participant by their name or email.</p><button id="manual-search" class="wide">Search participants</button></section></aside>
           </div>
         </section>
         <section id="participants-view" hidden>
@@ -78,7 +79,7 @@
         <section id="overview-view" hidden>
           <div class="section-heading"><div><p class="eyebrow">THE ROOM, AT A GLANCE</p><h1>Overview</h1><p>Shared attendance for this event. Updates every 15 seconds.</p></div><button id="dashboard-refresh">Refresh</button></div>
           <div class="stats"><article class="panel"><p>Eligible participants</p><strong id="eligible-count">—</strong></article><article class="panel"><p>Checked in · eligible</p><strong id="arrived-count">—</strong></article><article class="panel"><p>Not yet arrived · eligible</p><strong id="waiting-count">—</strong></article></div>
-          <section class="panel sync-panel"><div class="section-heading"><div><h2>Registration synchronization</h2><p id="sync-status" role="status">Loading…</p></div><button id="sync-now">Sync now</button></div><p id="sync-details" class="muted"></p><p id="sync-error" role="alert"></p><p class="footnote">Registration changes take effect after a successful sync. Confirmed arrivals are saved immediately.</p></section>
+          <section class="panel sync-panel"><div class="section-heading"><div><h2>Registration synchronization</h2><p id="sync-status" role="status">Loading…</p></div><button id="sync-now">Sync now</button></div><p id="sync-details" class="muted"></p><p id="sync-error" role="alert"></p><p id="sync-footnote" class="footnote">Registration changes take effect after a successful sync. Confirmed arrivals are saved immediately.</p></section>
           <p class="muted">Counts include valid, approved, rendered tickets only. Attendance and item claims are separate.</p>
         </section>
         <section id="activity-view" hidden><div class="section-heading"><div><p class="eyebrow">AT THE WELCOME DESK</p><h1>Recent activity</h1><p>The latest 30 arrivals across all stations.</p></div><button id="activity-refresh">Refresh</button></div><div id="activity-list" class="activity-list" role="list"></div></section>

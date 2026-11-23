@@ -2,6 +2,7 @@
 import json
 import os
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,7 +82,7 @@ class FakeSheets:
 class LiveSheets:
     """Explicit future activation boundary, independent of the email authorizations.
 
-    Only --live dry-run reads until a later operator configures all live gates.
+    Preview uses readonly credentials and refuses all attendance exports.
     Never calls ProductionSheets.initialize/update or changes their safeguards.
     """
     live = True
@@ -91,6 +92,10 @@ class LiveSheets:
             raise ValueError("Live adapter requires explicit WEB_LIVE_CONFIG repository root.")
         self.s = settings
         self.legacy = load_settings(profile="production", root=Path(settings.live_config))
+        if settings.read_only_preview:
+            # Disable email only in this reader's in-memory settings. Never edit the
+            # working email profile or change its approval files/runtime journals.
+            self.legacy = replace(self.legacy, email_enabled=False)
         if self.legacy.event_id != settings.event_id or self.legacy.email_enabled:
             raise ValueError("Live event must match; email must remain disabled in this sync configuration.")
         self.sheet = ProductionSheets(self.legacy, writable=False)
@@ -102,6 +107,8 @@ class LiveSheets:
         return apply_approved_groups(self.legacy, self.sheet.rows())
 
     def export_batch(self, items):
+        if self.s.read_only_preview:
+            raise PermissionError("Read-only preview cannot export attendance.")
         if not self.s.live_export:
             raise ValueError("Live export is disabled. Explicit later cutover activation is required.")
         if self.writer_tables is None:
