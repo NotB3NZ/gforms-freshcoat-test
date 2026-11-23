@@ -1,6 +1,7 @@
 import json
 import re
 import time
+import unicodedata
 from datetime import datetime
 
 from sqlalchemy import text
@@ -35,7 +36,7 @@ def sheet_time(value):
         raise Conflict("Existing attendance timestamp needs timezone review.") from None
 
 
-def eligibility(row, rows, event_id):
+def eligibility(row, rows, event_id, synthetic=False):
     # Production selection reasons cover approvals, exact aliases, frozen fields,
     # shared-email approvals and special-recipient exceptions. Delivery is separate.
     blocked = [r for r in reasons(row, rows, event_id, action="admit")
@@ -48,6 +49,8 @@ def eligibility(row, rows, event_id):
         blocked.append("issued ticket has not been rendered")
     if not TOKEN.fullmatch(str(row.get("ticket_token"))) or is_test_token(row.get("ticket_token")):
         blocked.append("invalid or controlled-test ticket")
+    if not synthetic and str(row.get("ticket_token")).startswith("DEMO_"):
+        blocked.append("development ticket is not an admission credential")
     if row.get("ticket_tier") not in TICKET_TIERS:
         blocked.append("unrecognized issued tier")
     return not blocked, "; ".join(dict.fromkeys(blocked))
@@ -62,7 +65,7 @@ class AdmissionService:
                    "WHERE p.event_id=:e AND p.participant_id=:p", e=self.s.event_id, p=participant_id)
 
     def lookup(self, token):
-        if not TOKEN.fullmatch(token) or is_test_token(token):
+        if not TOKEN.fullmatch(token) or is_test_token(token) or (not self.s.synthetic and token.startswith("DEMO_")):
             return {"status": "invalid", "message": "Malformed or controlled-test ticket. Use manual search for review."}
         with self.db.transaction() as conn:
             row = one(conn, "SELECT participant_id FROM participants WHERE event_id=:e AND token_digest=:t",
@@ -118,7 +121,7 @@ class AdmissionService:
             # Stable record IDs cover records still waiting for issuance. Their local
             # review key cannot collide with an issued participant namespace.
             pid = row.get("participant_id") or "unissued:" + row.source_id + ":" + row.get("record_id")
-            valid, reason = eligibility(row, rows, self.s.event_id)
+            valid, reason = eligibility(row, rows, self.s.event_id, self.s.synthetic)
             prepared.append((row, dict(e=self.s.event_id, p=pid, r=row.get("record_id"), s=row.source_id,
                                       c=row.get("price_category") or row.get("_price_category"),
                                       t=digest(row.get("ticket_token")) if row.get("ticket_token") else None,
@@ -158,10 +161,11 @@ class AdmissionService:
                     if previous["token_digest"]:
                         raise Conflict("Issued participant ID changed.")
                     conn.execute(text("DELETE FROM participants WHERE event_id=:e AND participant_id=:p"), {"e": data["e"], "p": previous["participant_id"]})
-                conn.execute(text("""INSERT INTO participants VALUES(:e,:p,:r,:s,:c,:t,:i,:n,:email,:tier,:ok,:reason)
+                data["search"] = unicodedata.normalize("NFKC", data["n"] + " " + data["email"]).casefold()
+                conn.execute(text("""INSERT INTO participants(event_id,participant_id,record_id,source_id,price_category,token_digest,identity_digest,name,email,tier,eligible,reason,search_text) VALUES(:e,:p,:r,:s,:c,:t,:i,:n,:email,:tier,:ok,:reason,:search)
                   ON CONFLICT(event_id,participant_id) DO UPDATE SET token_digest=excluded.token_digest,
                   identity_digest=excluded.identity_digest,name=excluded.name,email=excluded.email,tier=excluded.tier,
-                  eligible=excluded.eligible,reason=excluded.reason"""), data)
+                  eligible=excluded.eligible,reason=excluded.reason,search_text=excluded.search_text"""), data)
                 if row.get("checked_in_at"):
                     conn.execute(text("""INSERT INTO attendance VALUES(:e,:p,:t,:n,NULL,'legacy',:r)
                       ON CONFLICT(event_id,participant_id) DO NOTHING"""),
@@ -180,9 +184,9 @@ class AdmissionService:
 
     def list_participants(self, query="", tier="", attendance="", offset=0, limit=25):
         clauses = ["p.event_id=:e"]
-        params = dict(e=self.s.event_id, q="%" + query.casefold().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%", tier=tier, offset=offset, limit=limit)
+        params = dict(e=self.s.event_id, q="%" + unicodedata.normalize("NFKC", query).casefold().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%", tier=tier, offset=offset, limit=limit)
         if query:
-            clauses.append("(LOWER(p.name) LIKE :q ESCAPE '!' OR LOWER(p.email) LIKE :q ESCAPE '!')")
+            clauses.append("p.search_text LIKE :q ESCAPE '!'")
         if tier:
             clauses.append("p.tier=:tier")
         if attendance == "arrived":

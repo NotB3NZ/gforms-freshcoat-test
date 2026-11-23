@@ -39,6 +39,10 @@ class Lookup(Input):
     token: str = Field(max_length=2048)
 
 
+class Frame(Input):
+    image: str = Field(max_length=380000)
+
+
 class Confirm(Input):
     participant_id: str = Field(min_length=1, max_length=200)
     request_id: UUID
@@ -77,7 +81,7 @@ def create_app(settings=None, sheets=None, *, background=True):
                 if request.headers.get("content-type", "").split(";")[0] != "application/json":
                     return JSONResponse({"detail": "JSON request required."}, status_code=415)
                 try:
-                    if int(request.headers.get("content-length", "0")) > 8192:
+                    if int(request.headers.get("content-length", "0")) > (400000 if request.url.path == "/api/decode" else 8192):
                         return JSONResponse({"detail": "Request too large."}, status_code=413)
                 except ValueError:
                     return JSONResponse({"detail": "Invalid request size."}, status_code=400)
@@ -179,6 +183,15 @@ def create_app(settings=None, sheets=None, *, background=True):
     @app.post("/api/lookup")
     def lookup(body: Lookup, staff=Depends(operator)):
         return app.state.service.lookup(body.token)
+
+    @app.post("/api/decode")
+    def decode(body: Frame, staff=Depends(operator)):
+        from .decoder import decode_image
+        try:
+            token = decode_image(body.image)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        return app.state.service.lookup(token) if token else {"status": "no_qr"}
 
     @app.get("/api/participants")
     def participants(q: str = Query("", max_length=160), tier: str = Query("", max_length=50),

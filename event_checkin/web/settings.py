@@ -38,7 +38,7 @@ class WebSettings:
             raise ValueError("Use a PostgreSQL psycopg URL or explicit local SQLite URL.")
         if not self.synthetic and (not self.secure_cookie or not self.database_url.startswith("postgresql+psycopg://")):
             raise ValueError("Live mode requires HTTPS and PostgreSQL.")
-        if not self.password_hash or not self.password_hash.startswith("scrypt$"):
+        if not self.password_hash or not self.password_hash.startswith("pbkdf2_sha256$"):
             raise ValueError("Run python -m event_checkin.web.cli password; no password is built in.")
         verify_password("configuration-check", self.password_hash)
         ZoneInfo(self.timezone)

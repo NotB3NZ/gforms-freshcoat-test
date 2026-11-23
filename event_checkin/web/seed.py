@@ -7,7 +7,7 @@ from ..production_sheets import APPROVAL_HEADERS
 
 
 def token(label):
-    return base64.urlsafe_b64encode(hashlib.sha256(("freshcoat-local-fixture:" + label).encode()).digest()).decode().rstrip("=")
+    return "DEMO_" + base64.urlsafe_b64encode(hashlib.sha256(("freshcoat-local-fixture:" + label).encode()).digest()).decode().rstrip("=")[:38]
 
 
 def payload(event_id="freshcoat-synthetic"):

@@ -9,8 +9,7 @@ from ..production_sheets import FixtureSheets, ProductionSheets
 from ..shared_email import apply_approved_groups
 from ..config import Settings, load_settings
 from ..production import issued_identity
-from .security import digest
-from .service import Conflict
+from .service import Conflict, sheet_time
 
 ATTENDANCE_FIELDS = {"checked_in_at", "checked_in_by", "checkin_request_id"}
 
@@ -29,7 +28,8 @@ def match_export(rows, item):
     row = matches[0]
     changes = export_changes(item)
     if row.get("checked_in_at") and (row.get("checkin_request_id") != item["request_id"] or
-                                     row.get("checked_in_by") != item["checked_in_by"]):
+                                     row.get("checked_in_by") != item["checked_in_by"] or
+                                     abs(sheet_time(row.get("checked_in_at")) - item["checked_in_at"]) > 0.001):
         raise Conflict("Existing Sheet attendance differs; export requires reconciliation.")
     return row, changes
 

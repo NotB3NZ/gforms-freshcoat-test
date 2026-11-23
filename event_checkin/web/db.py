@@ -1,5 +1,7 @@
 from contextlib import contextmanager
 from pathlib import Path
+import unicodedata
+import os
 
 from sqlalchemy import create_engine, event, text
 
@@ -9,6 +11,10 @@ class Database:
         if url.startswith("sqlite:///") and url != "sqlite:///:memory:":
             path = Path(url.removeprefix("sqlite:///"))
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # Create privately before SQLite opens WAL/SHM files (which inherit mode).
+            descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+            os.close(descriptor)
+            path.chmod(0o600)
         self.engine = create_engine(url, pool_pre_ping=True,
                                     connect_args={"timeout": 30, "check_same_thread": False} if url.startswith("sqlite") else {})
         self.sqlite = self.engine.dialect.name == "sqlite"
@@ -48,6 +54,10 @@ class Database:
                     if statement.strip():
                         conn.execute(text(statement))
                 conn.execute(text("INSERT INTO schema_migrations VALUES(:v)"), {"v": path.name})
+            for row in many(conn, "SELECT event_id,participant_id,name,email FROM participants WHERE search_text=''"):
+                conn.execute(text("UPDATE participants SET search_text=:q WHERE event_id=:e AND participant_id=:p"),
+                             {"q": unicodedata.normalize("NFKC", row["name"] + " " + row["email"]).casefold(),
+                              "e": row["event_id"], "p": row["participant_id"]})
             conn.execute(text("INSERT INTO events(event_id,timezone) VALUES(:e,:tz) ON CONFLICT(event_id) DO NOTHING"),
                          {"e": settings.event_id, "tz": settings.timezone})
             conn.execute(text("INSERT INTO sync_state(event_id) VALUES(:e) ON CONFLICT(event_id) DO NOTHING"), {"e": settings.event_id})

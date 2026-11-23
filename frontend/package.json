@@ -1,0 +1,12 @@
+{
+  "name": "freshcoat-staff",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check app.js && node --check camera.js && node --check pending.js",
+    "test:browser": "node tests/browser.mjs"
+  }
+}

@@ -4,6 +4,16 @@ This project connects Google Form response Sheets to personalized FreshCoat card
 
 **Current boundary:** unscoped production batches and the production worker remain locked. [Reusable production plans](docs/BATCH_COMMAND_GUIDE.md#reusable-production-plan-prepare-and-review) use `batch-run --authorized-plan` with a private policy bound to the exact reviewed selection, configuration/assets and organization sender. Policies are prepared disabled; live execution also requires `--authorize-plan` and enabled email. The [legacy pilot](docs/OFFICIAL_PILOT.md), [personal-sender single-entry path](docs/SINGLE_ENTRY_SEND.md), and [organization inbox test](docs/ORGANIZATION_INBOX_TEST.md) retain their separate scopes. `EMAIL_ENABLED=false` always prohibits SMTP sending. Header initialization remains limited to reviewed row-one ranges. Email and authorization gates stay disabled during implementation and read-only preflight; the old worker does not inherit any plan authority.
 
+## Staff web application (synthetic local development)
+
+The separate [FreshCoat staff web app](docs/WEB_APP.md) adds password/nickname login,
+QR/manual review and confirmation, a shared attendance database, staff dashboard,
+and durable background attendance export. Start with the guide's isolated environment,
+private `.env.web`, synthetic seed and QR fixtures. The existing email commands and
+production authorization boundaries remain independently runnable and unchanged.
+Live Sheets operations and deployment are not activated. See the
+[verification record](docs/WEB_VERIFICATION.md) for tested behavior and environment limits.
+
 ## Separate test and production profiles
 
 Run commands from this project directory using the working environment:
