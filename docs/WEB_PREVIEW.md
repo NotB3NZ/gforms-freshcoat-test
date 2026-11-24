@@ -36,7 +36,7 @@ The setup command:
 - Uses a distinct local database at .web-runtime/preview/registrations.sqlite3.
 - Leaves .env.web, .env.production, Google credentials, issued tokens and email runtime files unchanged.
 
-The email-enabled flag in the read adapter is disabled only in memory. You do not need to turn off the working email workflow or edit its configuration to run this preview. Existing reviewed shared-email/Special mappings are retained.
+The preview requests registration-read-only settings from the production loader. Email is disabled and SMTP credentials are cleared in memory before profile validation, so an email-enabled production profile can also supply registration reads. All event/storage isolation checks and normal production sending locks remain active. You do not need to turn off the working email workflow or edit its configuration to run this preview. Existing reviewed shared-email/Special mappings are retained.
 
 ## What to verify
 
@@ -70,7 +70,7 @@ Use a fresh database for live cutover, import/reconcile existing attendance and 
 ## Checks
 
 ```sh
-.venv-web/bin/python -m unittest tests.test_web_preview tests.test_web_app -v
+.venv-web/bin/python -m unittest tests.test_web_preview_startup tests.test_web_preview tests.test_web_app -v
 npm --prefix frontend run check
 npm --prefix frontend test
 npm --prefix frontend run build

@@ -1,7 +1,7 @@
 import json
 import os
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -95,11 +95,14 @@ class Settings:
             raise ConfigurationError("SMTP_SECURITY must be starttls or ssl.")
 
 
-def load_settings(profile=None, root=None, *, single_entry=False, inbox_test=False, pilot=False, authorized_batch=False):
+def load_settings(profile=None, root=None, *, single_entry=False, inbox_test=False, pilot=False, authorized_batch=False,
+                  registration_read_only=False):
     root = Path(root or ROOT).resolve()
     profile = profile or os.environ.get("EVENT_CHECKIN_PROFILE", "test")
     if profile not in ("test", "production"):
         raise ConfigurationError("Choose profile test or production.")
+    if registration_read_only and (profile != "production" or single_entry or inbox_test or pilot or authorized_batch):
+        raise ConfigurationError("Read-only registration settings require production without sending authorization flags.")
     env_file = root / (".env.test" if profile == "test" else ".env.production")
     if profile == "test" and not env_file.is_file():
         env_file = root / ".env"  # Existing installations retain their test configuration.
@@ -147,6 +150,10 @@ def load_settings(profile=None, root=None, *, single_entry=False, inbox_test=Fal
         smtp_from=value("SMTP_FROM", ""), smtp_security=value("SMTP_SECURITY", "starttls"),
         email_enabled=value("EMAIL_ENABLED", "false").lower() == "true",
     )
+    if registration_read_only:
+        # Strip email capability before profile validation. The file and sending
+        # configuration are unchanged; all other isolation checks still run.
+        s = replace(s, email_enabled=False, smtp_host="", smtp_user="", smtp_password="", smtp_from="")
     ZoneInfo(s.timezone)
     if s.poll_seconds < 5:
         raise ConfigurationError("WORKER_POLL_SECONDS must be at least 5.")

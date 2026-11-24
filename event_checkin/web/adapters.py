@@ -2,7 +2,6 @@
 import json
 import os
 from copy import deepcopy
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -91,11 +90,8 @@ class LiveSheets:
         if settings.synthetic or not settings.live_config:
             raise ValueError("Live adapter requires explicit WEB_LIVE_CONFIG repository root.")
         self.s = settings
-        self.legacy = load_settings(profile="production", root=Path(settings.live_config))
-        if settings.read_only_preview:
-            # Disable email only in this reader's in-memory settings. Never edit the
-            # working email profile or change its approval files/runtime journals.
-            self.legacy = replace(self.legacy, email_enabled=False)
+        self.legacy = load_settings(profile="production", root=Path(settings.live_config),
+                                    registration_read_only=settings.read_only_preview)
         if self.legacy.event_id != settings.event_id or self.legacy.email_enabled:
             raise ValueError("Live event must match; email must remain disabled in this sync configuration.")
         self.sheet = ProductionSheets(self.legacy, writable=False)

@@ -179,12 +179,12 @@ class PreviewTests(unittest.TestCase):
 
     def test_preview_reader_reuses_mappings_without_changing_email_config(self):
         legacy = Settings(root=self.root, runtime=self.root / "legacy-runtime",
-                          event_id=self.s.event_id, email_enabled=True)
-        with patch("event_checkin.web.adapters.load_settings", return_value=legacy), \
+                          event_id=self.s.event_id, email_enabled=False)
+        with patch("event_checkin.web.adapters.load_settings", return_value=legacy) as loader, \
              patch("event_checkin.web.adapters.ProductionSheets") as source, \
              patch("event_checkin.web.adapters.apply_approved_groups", return_value=["reviewed"]) as groups:
             reader = LiveSheets(self.s)
-            self.assertTrue(legacy.email_enabled)
+            loader.assert_called_once_with(profile="production", root=self.root, registration_read_only=True)
             self.assertFalse(reader.legacy.email_enabled)
             self.assertEqual(source.call_args.kwargs, {"writable": False})
             self.assertEqual(reader.rows(), ["reviewed"])

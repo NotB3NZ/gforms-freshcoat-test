@@ -28,7 +28,7 @@ def failure_message(error):
 
 def prepare_preview(root, source_root):
     root, source_root = Path(root).resolve(), Path(source_root).resolve()
-    legacy = load_settings(profile="production", root=source_root)
+    legacy = load_settings(profile="production", root=source_root, registration_read_only=True)
     if not legacy.event_id or legacy.event_id == "freshcoat-synthetic":
         raise ValueError("The production configuration must contain its actual EVENT_ID.")
     # Reuse the staff login hash, never a plaintext password or SMTP credentials.
