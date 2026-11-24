@@ -1,21 +1,23 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#49259a">
-  <title>FreshCoat · Staff check-in</title>
+  <title>PacheckQ · Staff check-in</title>
   <link rel="stylesheet" href="/assets/style.css">
   <script src="/assets/vendor/jsQR.js" defer></script>
   <script type="module" src="/assets/app.js"></script>
 </head>
+
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <div id="login" class="login-shell">
     <section class="login-card">
       <div class="brandmark" aria-hidden="true">F</div>
-      <p class="eyebrow">FRESHCOAT · EVENT OPERATIONS</p>
+      <p class="eyebrow">PacheckQ · EVENT REGISTRATION</p>
       <h1>Welcome, staff.</h1>
       <p id="login-description">Sign in to help everyone get settled.</p>
       <form id="password-form">
@@ -36,7 +38,8 @@
   </div>
   <div id="workspace" hidden>
     <aside class="sidebar">
-      <a class="brand" href="#scan"><span class="brandmark small" aria-hidden="true">F</span><span>FreshCoat<small>Staff check-in</small></span></a>
+      <a class="brand" href="#scan"><span class="brandmark small" aria-hidden="true">F</span><span>PacheckQ<small>Staff
+            check-in</small></span></a>
       <nav aria-label="Main navigation">
         <button data-view="scan" aria-current="page"><span aria-hidden="true">▣</span>Scan</button>
         <button data-view="participants"><span aria-hidden="true">☷</span>Participants</button>
@@ -52,44 +55,147 @@
       </header>
       <main id="main" tabindex="-1">
         <div id="connection" role="status" class="connection">Connecting to backend…</div>
-        <p id="preview-banner" class="panel muted" role="status" hidden>Read-only preview of real registrations. Scan or search to verify a ticket; attendance changes are disabled.</p>
-        <div id="pending-banner" class="notice" role="alert" hidden>One check-in is unresolved. Retry it before continuing. <button id="pending-open">Review pending check-in</button></div>
+        <p id="preview-banner" class="panel muted" role="status" hidden>Read-only preview of real registrations. Scan or
+          search to verify a ticket; attendance changes are disabled.</p>
+        <div id="pending-banner" class="notice" role="alert" hidden>One check-in is unresolved. Retry it before
+          continuing. <button id="pending-open">Review pending check-in</button></div>
         <section id="scan-view">
-          <div class="section-heading"><div><p class="eyebrow">WELCOME THEM IN</p><h1>Scan a ticket</h1><p id="scan-description">Review the participant, then confirm their arrival.</p></div></div>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">WELCOME THEM IN</p>
+              <h1>Scan a ticket</h1>
+              <p id="scan-description">Review the participant, then confirm their arrival.</p>
+            </div>
+          </div>
           <div class="scan-grid">
             <section class="panel camera-panel" aria-labelledby="camera-title">
-              <div class="panel-heading"><h2 id="camera-title">Ticket scanner</h2><span id="camera-state" class="badge">Camera off</span></div>
-              <div class="viewfinder"><video id="video" autoplay muted playsinline aria-label="Live ticket camera"></video><div id="camera-placeholder"><span class="scan-symbol" aria-hidden="true">▣</span><p>Ready for the next hello.</p><p class="muted">Place one ticket QR in the camera view.</p></div></div>
+              <div class="panel-heading">
+                <h2 id="camera-title">Ticket scanner</h2><span id="camera-state" class="badge">Camera off</span>
+              </div>
+              <div class="viewfinder"><video id="video" autoplay muted playsinline
+                  aria-label="Live ticket camera"></video>
+                <div id="camera-placeholder"><span class="scan-symbol" aria-hidden="true">▣</span>
+                  <p>Ready for the next hello.</p>
+                  <p class="muted">Place one ticket QR in the camera view.</p>
+                </div>
+              </div>
               <p id="camera-message" class="camera-message" role="status">Start the camera when you’re ready.</p>
-              <div class="camera-controls"><button id="camera-start" class="primary">Start camera</button><button id="camera-stop" hidden>Stop camera</button></div>
-              <div class="camera-choice"><label for="camera-select">Camera</label><select id="camera-select"><option value="">Rear camera (preferred)</option></select></div>
-              <div class="file-control"><label for="qr-file">Scan a QR image instead</label><input type="file" id="qr-file" accept="image/png,image/jpeg,image/webp"><small>For a saved ticket or a development QR fixture.</small></div>
+              <div class="camera-controls"><button id="camera-start" class="primary">Start camera</button><button
+                  id="camera-stop" hidden>Stop camera</button></div>
+              <div class="camera-choice"><label for="camera-select">Camera</label><select id="camera-select">
+                  <option value="">Rear camera (preferred)</option>
+                </select></div>
+              <div class="file-control"><label for="qr-file">Scan a QR image instead</label><input type="file"
+                  id="qr-file" accept="image/png,image/jpeg,image/webp"><small>For a saved ticket or a development QR
+                  fixture.</small></div>
             </section>
-            <aside class="scan-aside"><section class="panel"><p class="eyebrow">A QUICK REMINDER</p><h2>Scan. Review. Welcome.</h2><ol class="steps"><li>Hold one ticket steady.</li><li>Check the name and ticket status.</li><li id="review-instruction">Select <strong>Check in</strong> to record arrival.</li></ol><p class="muted">Scanning alone never records attendance.</p></section><section class="panel manual-callout"><h2>Can’t scan the ticket?</h2><p>Find a participant by their name or email.</p><button id="manual-search" class="wide">Search participants</button></section></aside>
+            <aside class="scan-aside">
+              <section class="panel">
+                <p class="eyebrow">A QUICK REMINDER</p>
+                <h2>Scan. Review. Welcome.</h2>
+                <ol class="steps">
+                  <li>Hold one ticket steady.</li>
+                  <li>Check the name and ticket status.</li>
+                  <li id="review-instruction">Select <strong>Check in</strong> to record arrival.</li>
+                </ol>
+                <p class="muted">Scanning alone never records attendance.</p>
+              </section>
+              <section class="panel manual-callout">
+                <h2>Can’t scan the ticket?</h2>
+                <p>Find a participant by their name or email.</p><button id="manual-search" class="wide">Search
+                  participants</button>
+              </section>
+            </aside>
           </div>
         </section>
         <section id="participants-view" hidden>
-          <div class="section-heading"><div><p class="eyebrow">FIND A FAMILIAR FACE</p><h1>Participants</h1><p>Search registrations and confirm an arrival manually.</p></div></div>
-          <form id="search-form" class="panel filters"><div class="search-field"><label for="search">Name or email</label><input type="search" id="search" placeholder="Search participants" maxlength="160"></div><div><label for="tier">Ticket tier</label><select id="tier"><option value="">All tiers</option></select></div><div><label for="attendance">Attendance</label><select id="attendance"><option value="">All participants</option><option value="waiting">Eligible · Not arrived</option><option value="arrived">Checked in</option><option value="ineligible">Ineligible</option></select></div><button class="primary">Search</button></form>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">FIND A FAMILIAR FACE</p>
+              <h1>Participants</h1>
+              <p>Search registrations and confirm an arrival manually.</p>
+            </div>
+          </div>
+          <form id="search-form" class="panel filters">
+            <div class="search-field"><label for="search">Name or email</label><input type="search" id="search"
+                placeholder="Search participants" maxlength="160"></div>
+            <div><label for="tier">Ticket tier</label><select id="tier">
+                <option value="">All tiers</option>
+              </select></div>
+            <div><label for="attendance">Attendance</label><select id="attendance">
+                <option value="">All participants</option>
+                <option value="waiting">Eligible · Not arrived</option>
+                <option value="arrived">Checked in</option>
+                <option value="ineligible">Ineligible</option>
+              </select></div><button class="primary">Search</button>
+          </form>
           <p id="participants-message" role="status"></p>
-          <div class="table-header" aria-hidden="true"><span>Participant</span><span>Ticket / source</span><span>Status</span><span>Action</span></div>
+          <div class="table-header" aria-hidden="true"><span>Participant</span><span>Ticket /
+              source</span><span>Status</span><span>Action</span></div>
           <div id="participant-list" class="participant-list"></div>
-          <div class="pagination"><button id="previous">Previous</button><span id="page-info" role="status"></span><button id="next">Next</button></div>
+          <div class="pagination"><button id="previous">Previous</button><span id="page-info"
+              role="status"></span><button id="next">Next</button></div>
         </section>
         <section id="overview-view" hidden>
-          <div class="section-heading"><div><p class="eyebrow">THE ROOM, AT A GLANCE</p><h1>Overview</h1><p>Shared attendance for this event. Updates every 15 seconds.</p></div><button id="dashboard-refresh">Refresh</button></div>
-          <div class="stats"><article class="panel"><p>Eligible participants</p><strong id="eligible-count">—</strong></article><article class="panel"><p>Checked in · eligible</p><strong id="arrived-count">—</strong></article><article class="panel"><p>Not yet arrived · eligible</p><strong id="waiting-count">—</strong></article></div>
-          <section class="panel sync-panel"><div class="section-heading"><div><h2>Registration synchronization</h2><p id="sync-status" role="status">Loading…</p></div><button id="sync-now">Sync now</button></div><p id="sync-details" class="muted"></p><p id="sync-error" role="alert"></p><p id="sync-footnote" class="footnote">Registration changes take effect after a successful sync. Confirmed arrivals are saved immediately.</p></section>
-          <p class="muted">Counts include valid, approved, rendered tickets only. Attendance and item claims are separate.</p>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">THE ROOM, AT A GLANCE</p>
+              <h1>Overview</h1>
+              <p>Shared attendance for this event. Updates every 15 seconds.</p>
+            </div><button id="dashboard-refresh">Refresh</button>
+          </div>
+          <div class="stats">
+            <article class="panel">
+              <p>Eligible participants</p><strong id="eligible-count">—</strong>
+            </article>
+            <article class="panel">
+              <p>Checked in · eligible</p><strong id="arrived-count">—</strong>
+            </article>
+            <article class="panel">
+              <p>Not yet arrived · eligible</p><strong id="waiting-count">—</strong>
+            </article>
+          </div>
+          <section class="panel sync-panel">
+            <div class="section-heading">
+              <div>
+                <h2>Registration synchronization</h2>
+                <p id="sync-status" role="status">Loading…</p>
+              </div><button id="sync-now">Sync now</button>
+            </div>
+            <p id="sync-details" class="muted"></p>
+            <p id="sync-error" role="alert"></p>
+            <p id="sync-footnote" class="footnote">Registration changes take effect after a successful sync. Confirmed
+              arrivals are saved immediately.</p>
+          </section>
+          <p class="muted">Counts include valid, approved, rendered tickets only. Attendance and item claims are
+            separate.</p>
         </section>
-        <section id="activity-view" hidden><div class="section-heading"><div><p class="eyebrow">AT THE WELCOME DESK</p><h1>Recent activity</h1><p>The latest 30 arrivals across all stations.</p></div><button id="activity-refresh">Refresh</button></div><div id="activity-list" class="activity-list" role="list"></div></section>
+        <section id="activity-view" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">AT THE WELCOME DESK</p>
+              <h1>Recent activity</h1>
+              <p>The latest 30 arrivals across all stations.</p>
+            </div><button id="activity-refresh">Refresh</button>
+          </div>
+          <div id="activity-list" class="activity-list" role="list"></div>
+        </section>
       </main>
-      <footer>FreshCoat · A thoughtful welcome, one person at a time.</footer>
+      <footer>PacheckQ · A thoughtful welcome, one person at a time.</footer>
     </div>
   </div>
   <dialog id="review" aria-labelledby="review-title" aria-describedby="review-status">
-    <div class="dialog-body"><p class="eyebrow" id="review-eyebrow">PARTICIPANT REVIEW</p><h2 id="review-title" tabindex="-1">Review participant</h2><p id="review-email" class="wrap muted"></p><dl id="review-details"></dl><div id="review-status" class="review-status" role="status" aria-live="assertive"></div><p id="review-error" role="alert"></p></div>
-    <div class="dialog-actions"><button id="confirm" class="primary">Check in</button><button id="cancel">Cancel / Scan another</button></div>
+    <div class="dialog-body">
+      <p class="eyebrow" id="review-eyebrow">PARTICIPANT REVIEW</p>
+      <h2 id="review-title" tabindex="-1">Review participant</h2>
+      <p id="review-email" class="wrap muted"></p>
+      <dl id="review-details"></dl>
+      <div id="review-status" class="review-status" role="status" aria-live="assertive"></div>
+      <p id="review-error" role="alert"></p>
+    </div>
+    <div class="dialog-actions"><button id="confirm" class="primary">Check in</button><button id="cancel">Cancel / Scan
+        another</button></div>
   </dialog>
 </body>
+
 </html>
