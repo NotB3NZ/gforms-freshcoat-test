@@ -116,3 +116,45 @@ test('kiosk camera pauses decoding while retaining permission stream and resumes
   assert.equal(decodes, 2); assert.equal(starts, 1); assert.equal(stops, 0);
   ended(); assert.match(error, /disconnected.*Restart camera/); assert.equal(scanner.running, false);
 });
+
+test('default timers support browser receiver requirements during recovery and dismissal', async () => {
+  const originalSet = globalThis.setTimeout, originalClear = globalThis.clearTimeout;
+  const timers = [], cancelled = [];
+  globalThis.setTimeout = function (callback, delay) {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    const timer = {callback, delay}; timers.push(timer); return timer;
+  };
+  globalThis.clearTimeout = function (timer) {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    cancelled.push(timer);
+  };
+  let flow;
+  try {
+    const f = fixture();
+    f.store.begin('p', 'qr', 'existing-request', true);
+    const states = [];
+    let online = false, ready = 0;
+    const result = {request_id: 'existing-request', status: 'duplicate',
+      participant: {participant_id: 'p', name: 'Jamie Reyes', checked_in_at: 123, checked_in_by: 'Demo opening shift'}};
+    flow = new KioskFlow({store: f.store, show: state => states.push(state), ready: () => ready++,
+      api: async () => { if (!online) throw new Error('Response lost'); return {resolved: true, result}; }});
+    await flow.recover();
+    assert.equal(states.at(-1).kind, 'pending');
+    assert.equal(timers.at(-1).delay, 3000);
+    assert.equal(f.store.read().request_id, 'existing-request');
+    online = true;
+    timers.at(-1).callback();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(states.at(-1).kind, 'duplicate');
+    assert.equal(f.store.read(), null);
+    assert.equal(timers.at(-1).delay, 5000);
+    timers.at(-1).callback();
+    assert.equal(ready, 1);
+    assert.equal(flow.busy, false);
+    flow.dispose();
+    assert.ok(cancelled.length >= 3);
+  } finally {
+    globalThis.setTimeout = originalSet;
+    globalThis.clearTimeout = originalClear;
+  }
+});

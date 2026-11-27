@@ -25,7 +25,7 @@ export function kioskOutcome(result) {
 // The camera stays paused until a durable request has a confirmed outcome.
 // Timers and transport are injected so lost responses and refresh are testable.
 export class KioskFlow {
-  constructor({api, store, show, ready, seconds = 5, uuid = () => crypto.randomUUID(), schedule = setTimeout, cancel = clearTimeout}) {
+  constructor({api, store, show, ready, seconds = 5, uuid = () => crypto.randomUUID(), schedule = (callback, delay) => setTimeout(callback, delay), cancel = timer => clearTimeout(timer)}) {
     Object.assign(this, {api, store, show, ready, seconds, uuid, schedule, cancel});
     this.busy = false; this.disposed = false; this.timer = null; this.connectionFailed = false;
   }
