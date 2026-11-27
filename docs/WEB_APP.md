@@ -110,6 +110,20 @@ Final hosting/domain, database provider, network fallback and freshness policy a
 
 ## Verification commands and limits
 
+### Kiosk Mode
+
+Signed-in staff can select **Kiosk Mode**, choose a camera, set the result display time (2–20 seconds, default 5), and mute sound feedback. Select **Start kiosk and allow camera** to grant camera access. Each recognized QR then runs through the existing transactional check-in service automatically. The camera keeps its permission stream open and pauses decoding while a participant is being processed or their result is displayed. A QR must leave the view for 1.5 seconds before the same QR can trigger again. Fullscreen is optional; browser or operating-system fullscreen exit does not unlock staff controls.
+
+Migration `004_kiosk.sql` adds backward-compatible session settings. The server reads kiosk mode from the authenticated session and records exactly `self checkin`, keeping `method=qr`. Ordinary QR/manual staff attribution is unchanged. Arrival timestamps and attribution remain immutable on duplicates. Attendance still commits with its request result and outbox entry in the same database transaction; registration import and Google Sheets export stay in the background worker. Export uses the saved attribution without translating it.
+
+Kiosk responses omit email and internal eligibility notes. Results show the name and ticket/registration details, or the original time and attribution for an existing arrival. Staff data endpoints, nickname changes and logout are locked for kiosk sessions. Returning to staff controls requires the shared staff password, with the same throttling as login. Kiosk admission is unavailable in read-only preview.
+
+Before submitting attendance, the station saves one request ID in the existing browser pending store. It shows a welcome only after the backend confirms a committed arrival. An uncertain response pauses the queue and retries reconciliation automatically every three seconds using that same ID. Reloading the page restores kiosk mode from the server and recovers the pending attempt. Keep browser storage enabled; do not clear it to bypass an unresolved attempt. If a staff session expires, use **Staff controls** to authenticate and restore recovery; a pending kiosk attempt keeps kiosk attribution. Staff controls remain unavailable until that attempt resolves. Camera denial, disconnects and interrupted feeds show recovery instructions and **Restart camera**. Camera/audio/fullscreen behavior still needs validation on actual event devices.
+
+Frontend kiosk unit tests cover automatic admission, duplicate/ineligible/unknown outcomes, held frames, stream reuse, lost responses, and recovery before/after commit. Backend synthetic tests cover server attribution, privacy, staff-control locking, password throttling, migration upgrade, background export, preview/closed admissions, and a race between two kiosks and a staff process. The browser runner also includes synthetic canvas-camera kiosk scenarios and responsive screenshots.
+
+Kiosk verification on 2026-11-27: all 43 focused backend tests and 18 frontend unit tests passed, as did frontend syntax/build and the Apps Script regression. The broader Python run passed 475 of 476 tests; the existing `ActualRenderVerificationTests.test_current_template_synthetic_card_name_tier_qr_and_invalid_archive` failed when local production email settings triggered the configuration safety guard. No production settings were changed. The browser run could not start because this sandbox denies localhost listening; a separate headless Chrome launch also aborted. Browser screenshots, actual camera/audio/fullscreen behavior, and PostgreSQL execution remain unverified here.
+
 ```sh
 # Includes existing issuance, email, identity, source, tier and rendering regressions.
 .venv-web/bin/python -m unittest discover -v

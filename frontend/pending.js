@@ -14,9 +14,10 @@ export class PendingAttempt {
     }
     return p;
   }
-  begin(participantId, method, requestId) {
+  begin(participantId, method, requestId, kiosk = false) {
     if (this.read()) throw new Error('Resolve the pending check-in first.');
     const p = {participant_id: participantId, method, request_id: requestId, event_id: this.eventId};
+    if (kiosk) p.kiosk = true;
     this.storage.setItem(this.key, JSON.stringify(p));
     if (this.read()?.request_id !== requestId) throw new Error('Unable to retain the check-in request. Do not continue.');
     return p;

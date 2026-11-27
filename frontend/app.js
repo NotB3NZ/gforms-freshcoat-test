@@ -1,16 +1,19 @@
 import {CameraScanner, imageFrame} from './camera.js';
 import {PendingAttempt} from './pending.js';
 import {participantReview} from './review.js';
+import {KioskFlow, QrGate} from './kiosk.js';
 
 const $ = id => document.getElementById(id);
 let identity = null, pendingStore = null, current = null, method = 'qr', view = 'scan';
 let pending = null, submissionBusy = false, modalBusy = false, lastFocus = null;
 let dashboard = null, offset = 0, searchGeneration = 0, busyLookup = false, resumeCamera = false;
 let dashboardBusy = false, lastConnected = null, timeZone = 'Asia/Manila';
+let kioskActive = false, kioskFlow = null, kioskGate = new QrGate(), kioskAudio = null, kioskDevice = '';
 const readOnly = () => identity?.read_only_preview === true;
 
 function showDataMode() {
   const preview = readOnly();
+  $('kiosk-setup-open').hidden = preview;
   $('preview-banner').hidden = !preview;
   $('demo-label').hidden = identity?.mode === 'live';
   text('demo-label', preview ? 'Real registrations · Read-only preview' : 'Synthetic demo');
@@ -44,7 +47,7 @@ async function api(path, body, options = {}) {
     let result;
     try { result = await response.json(); } catch { throw new Error('Unexpected backend response. Retry to reconcile.'); }
     if (!response.ok) {
-      if (response.status === 401 && path !== 'login') showLogin();
+      if (response.status === 401 && path !== 'login' && !kioskActive) showLogin();
       throw new Error(typeof result.detail === 'string' ? result.detail : 'Request could not be processed. Review the input and retry.');
     }
     return result;
@@ -93,7 +96,7 @@ function ensureNoPending() {
   } catch (error) { text('camera-message', error.message); $('pending-banner').hidden = false; return false; }
 }
 function startCamera() {
-  if (!identity?.nickname || busyLookup || view !== 'scan' || document.hidden || $('review').open || !ensureNoPending()) return;
+  if (kioskActive || !identity?.nickname || busyLookup || view !== 'scan' || document.hidden || $('review').open || !ensureNoPending()) return;
   resumeCamera = true;
   scanner.start($('camera-select').value);
 }
@@ -109,6 +112,7 @@ function showLogin() {
   $('password').focus();
 }
 async function enter() {
+  timeZone = identity.timezone || timeZone;
   $('password').value = '';
   $('password-form').hidden = true;
   $('nickname-form').hidden = Boolean(identity.nickname);
@@ -125,6 +129,12 @@ async function enter() {
   showDataMode(); pending = null;
   try { pendingStore = readOnly() ? null : new PendingAttempt(localStorage, identity.event_id, location.origin); }
   catch { pendingStore = null; }
+  // A recovered kiosk request must retain server-controlled kiosk attribution,
+  // including after an expired session requires a fresh staff sign-in.
+  try {
+    if (!readOnly() && !identity.kiosk && pendingStore?.read()?.kiosk) Object.assign(identity, await api('kiosk/start', {result_seconds: 5, muted: true}));
+  } catch (error) { text('camera-message', error.message); return; }
+  if (identity.kiosk) { enterKiosk(); return; }
   navigate('scan');
   await refreshDashboard();
   try { pending = pendingStore?.read(); if (pending) await openPending(); } catch (error) {
@@ -149,7 +159,7 @@ $('nickname-form').addEventListener('submit', async event => {
 });
 $('logout').onclick = logout; $('nickname-logout').onclick = logout;
 function navigate(next) {
-  if (!identity?.nickname) return;
+  if (!identity?.nickname || kioskActive) return;
   if (next !== view || next !== 'scan') stopCamera();
   view = next;
   for (const name of ['scan', 'participants', 'overview', 'activity']) $(name + '-view').hidden = name !== next;
@@ -189,7 +199,7 @@ function details(p) {
   }
 }
 function showLookupResult(result) {
-  if (!identity?.nickname) return;
+  if (!identity?.nickname || kioskActive) return;
   if (result.status === 'found') return showParticipant(result.participant, 'qr');
   current = null; openDialog();
   text('review-title', result.status === 'unknown' ? 'Unknown ticket' : 'Invalid ticket');
@@ -199,6 +209,7 @@ function showLookupResult(result) {
   $('cancel').disabled = false; text('cancel', 'Cancel / Scan another');
 }
 function showParticipant(p, sourceMethod) {
+  if (kioskActive) return;
   current = p; method = sourceMethod;
   openDialog(); text('review-eyebrow', sourceMethod === 'qr' ? 'QR · PARTICIPANT REVIEW' : 'MANUAL · PARTICIPANT REVIEW');
   text('review-title', p.name); text('review-email', p.email); details(p);
@@ -289,12 +300,12 @@ async function openPending() {
 }
 $('pending-open').onclick = openPending;
 async function loadParticipants() {
-  if (!identity?.nickname) return;
+  if (!identity?.nickname || kioskActive) return;
   const generation = ++searchGeneration; text('participants-message', 'Loading participants…');
   const params = new URLSearchParams({q: $('search').value, tier: $('tier').value, attendance: $('attendance').value, offset, limit: 25});
   try {
     const result = await api('participants?' + params);
-    if (generation !== searchGeneration || !identity?.nickname) return;
+    if (generation !== searchGeneration || !identity?.nickname || kioskActive) return;
     connection(true); text('participants-message', result.total ? `${result.total} matching participants` : 'No participants match. Try another name, email or filter.');
     const focusedParticipant = document.activeElement?.dataset.participant;
     const list = $('participant-list'); list.replaceChildren();
@@ -323,7 +334,7 @@ $('search-form').onsubmit = event => { event.preventDefault(); offset = 0; loadP
 $('previous').onclick = () => { offset = Math.max(0, offset - 25); loadParticipants(); };
 $('next').onclick = () => { offset += 25; loadParticipants(); };
 async function refreshDashboard() {
-  if (!identity?.nickname || dashboardBusy) return;
+  if (!identity?.nickname || dashboardBusy || kioskActive) return;
   dashboardBusy = true;
   try {
     const data = await api('dashboard');
@@ -356,9 +367,149 @@ $('sync-now').onclick = async () => {
   catch (error) { text('sync-error', error.message); }
   finally { $('sync-now').disabled = false; }
 };
-document.addEventListener('visibilitychange', () => { if (document.hidden) stopCamera(); else if (identity?.nickname) refreshDashboard(); });
-window.addEventListener('pagehide', stopCamera);
-window.addEventListener('storage', event => { if (pendingStore && event.key === pendingStore.key && event.newValue) { stopCamera(); openPending(); } });
-setInterval(() => { if (!document.hidden && identity?.nickname) { refreshDashboard(); if (view === 'participants' && !$('review').open) loadParticipants(); } }, 15000);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { stopCamera(); kioskScanner.stop(); }
+  else if (kioskActive) startKioskCamera();
+  else if (identity?.nickname) refreshDashboard();
+});
+window.addEventListener('pagehide', () => { stopCamera(); kioskScanner.stop(); kioskFlow?.dispose(); });
+window.addEventListener('storage', event => {
+  if (pendingStore && event.key === pendingStore.key && event.newValue) {
+    stopCamera();
+    if (kioskActive) { kioskScanner.pause(); kioskFlow?.recover(); } else openPending();
+  }
+});
+setInterval(() => { if (!document.hidden && identity?.nickname && !kioskActive) { refreshDashboard(); if (view === 'participants' && !$('review').open) loadParticipants(); } }, 15000);
+function showKiosk(state) {
+  if (!kioskActive) return;
+  $('kiosk-result').className = `panel kiosk-result ${state.kind}`;
+  text('kiosk-icon', {success: '✓', duplicate: '↺', invalid: '✕', pending: '⌛', processing: '…', error: '!'}[state.kind] || '▣');
+  text('kiosk-title', state.title);
+  const p = state.participant;
+  text('kiosk-detail', p ? `${p.tier} · ${p.price_category}${state.kind === 'duplicate' ? ` · Original arrival: ${stamp(p.checked_in_at)} by ${p.checked_in_by}` : ' · Arrival confirmed'}` : state.message || '');
+  text('kiosk-registration', p ? `Registration ${p.record_id}` : '');
+  if (state.sound) kioskSound(state.sound);
+  else if (['success', 'duplicate', 'invalid', 'error'].includes(state.kind)) kioskSound(state.kind);
+}
+function kioskSound(kind) {
+  if (identity?.muted || !kioskAudio || kioskAudio.state !== 'running') return;
+  const tones = {success: [660, 880], duplicate: [440, 440], invalid: [220, 165], error: [165, 165, 165]}[kind];
+  try {
+    tones.forEach((frequency, i) => {
+      const oscillator = kioskAudio.createOscillator(), gain = kioskAudio.createGain(), at = kioskAudio.currentTime + i * 0.18;
+      oscillator.frequency.value = frequency; gain.gain.setValueAtTime(0.08, at); gain.gain.exponentialRampToValueAtTime(0.001, at + 0.14);
+      oscillator.connect(gain); gain.connect(kioskAudio.destination); oscillator.start(at); oscillator.stop(at + 0.15);
+    });
+  } catch { /* Visible results remain available when audio is unavailable. */ }
+}
+const kioskScanner = new CameraScanner({video: $('kiosk-video'), mediaDevices: navigator.mediaDevices, pauseOnResult: true,
+  decodeFrame: async canvas => {
+    if (!window.jsQR) throw new Error('QR decoder unavailable. Reload this station or ask staff for help.');
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+    const code = window.jsQR(pixels.data, pixels.width, pixels.height, {inversionAttempts: 'attemptBoth'});
+    return kioskGate.observe(code?.data || null) ? {status: 'qr', token: code.data} : {status: 'no_qr'};
+  },
+  onResult: result => kioskFlow?.scan(result.token),
+  onError: message => {
+    text('kiosk-camera-message', `Camera needs attention. ${message} Ask staff to check browser permissions and select Restart camera.`);
+    $('kiosk-camera-restart').hidden = false;
+    if (!kioskFlow?.busy) showKiosk({kind: 'error', title: 'Camera unavailable', message: 'Please ask staff for help.'});
+  },
+  onDevices: devices => {
+    $('kiosk-camera').replaceChildren(new Option('Rear camera (preferred)', ''));
+    devices.forEach((d, i) => $('kiosk-camera').add(new Option(d.label || `Camera ${i + 1}`, d.deviceId)));
+  },
+  onState: state => {
+    if (state.startsWith('Camera ready')) {
+      text('kiosk-camera-message', 'Camera ready · Remove your ticket after the result.'); $('kiosk-camera-restart').hidden = true;
+      if (!kioskFlow?.busy) showKiosk({kind: 'ready', title: 'Ready to welcome you', message: 'Place one ticket QR in the camera view.'});
+    }
+    else if (state === 'Camera off') { text('kiosk-camera-message', 'Camera paused. Select Restart camera if it does not resume.'); $('kiosk-camera-restart').hidden = false; }
+  }
+});
+function kioskReady() {
+  showKiosk({kind: 'ready', title: 'Ready to welcome you', message: 'Place one QR in view. Remove the previous ticket before scanning it again.'});
+  startKioskCamera();
+}
+function startKioskCamera() {
+  if (!kioskActive || kioskFlow?.busy || document.hidden || $('kiosk-exit').open) return;
+  if (kioskScanner.running) kioskScanner.resume();
+  else kioskScanner.start(kioskDevice);
+}
+function enterKiosk() {
+  stopCamera(); kioskActive = true;
+  if ($('review').open) $('review').close();
+  $('workspace').hidden = true; $('login').hidden = true; $('kiosk').hidden = false;
+  text('kiosk-sound-state', identity.muted ? 'Sound muted by staff.' : 'Sound enabled when allowed by this browser.');
+  try { kioskDevice = sessionStorage.getItem('pacheckq.kiosk.camera') || kioskDevice; } catch { /* Rear camera remains the default. */ }
+  kioskFlow?.dispose();
+  kioskFlow = new KioskFlow({api, store: pendingStore, show: showKiosk, ready: kioskReady, seconds: identity.result_seconds || 5});
+  try {
+    if (!pendingStore) throw new Error('Enable site storage and reload before starting this station.');
+    if (pendingStore.read()) kioskFlow.recover(); else kioskReady();
+  } catch (error) { showKiosk({kind: 'error', title: 'Staff assistance needed', message: error.message}); }
+}
+$('kiosk-setup-open').onclick = () => {
+  if (readOnly() || !ensureNoPending()) return;
+  stopCamera(); text('kiosk-setup-error', ''); $('kiosk-setup').showModal();
+};
+$('kiosk-setup-cancel').onclick = () => $('kiosk-setup').close();
+$('kiosk-setup-form').onsubmit = async event => {
+  event.preventDefault(); event.submitter.disabled = true;
+  // Audio must be unlocked by the staff setup gesture.
+  try {
+    const Audio = window.AudioContext || window.webkitAudioContext;
+    if (!$('kiosk-muted').checked && Audio) { kioskAudio ??= new Audio(); await kioskAudio.resume(); }
+  } catch { /* Browser may still block audio; text feedback is always shown. */ }
+  try {
+    if (!ensureNoPending()) return;
+    kioskDevice = $('kiosk-camera').value;
+    try { sessionStorage.setItem('pacheckq.kiosk.camera', kioskDevice); } catch { /* Camera selection still works for this page. */ }
+    Object.assign(identity, await api('kiosk/start', {result_seconds: Number($('kiosk-seconds').value), muted: $('kiosk-muted').checked}));
+    $('kiosk-setup').close(); enterKiosk();
+  } catch (error) { text('kiosk-setup-error', error.message); }
+  finally { event.submitter.disabled = false; }
+};
+$('kiosk-camera-restart').onclick = startKioskCamera;
+$('kiosk-fullscreen').onclick = () => document.documentElement.requestFullscreen?.().catch(() => { text('kiosk-camera-message', 'Fullscreen unavailable. You can use this station in the current window.'); });
+$('kiosk-unlock').onclick = () => { kioskScanner.pause(); $('kiosk-password').value = ''; text('kiosk-exit-error', ''); $('kiosk-exit').showModal(); };
+$('kiosk-exit-cancel').onclick = () => $('kiosk-exit').close();
+$('kiosk-exit').addEventListener('close', startKioskCamera);
+$('kiosk-exit-form').onsubmit = async event => {
+  event.preventDefault(); event.submitter.disabled = true;
+  try {
+    // Authenticate first, but never change attribution while an attempt is unresolved.
+    const password = $('kiosk-password').value;
+    if (pendingStore?.read() || kioskFlow?.busy) {
+      const session = await api('session');
+      if (session.authenticated) {
+        await api('kiosk/exit', {password, recover_only: true});
+        $('kiosk-password').value = '';
+        text('kiosk-exit-error', 'Staff password verified. Wait for the pending check-in to resolve, then unlock again. Automatic recovery is continuing.');
+        return;
+      }
+      // Restore an expired session without changing a pending arrival's attribution.
+      const nickname = identity.nickname;
+      const config = {result_seconds: identity.result_seconds || 5, muted: Boolean(identity.muted)};
+      const restored = await api('login', {password});
+      kioskFlow?.dispose();
+      identity = restored;
+      await api('nickname', {nickname}); identity.nickname = nickname;
+      Object.assign(identity, await api('kiosk/start', config));
+      $('kiosk-password').value = ''; $('kiosk-exit').close(); enterKiosk();
+      return;
+    }
+    try { await api('kiosk/exit', {password}); }
+    catch (error) {
+      const session = await api('session');
+      if (session.authenticated) throw error;
+      identity = await api('login', {password});
+    }
+    $('kiosk-password').value = ''; $('kiosk-exit').close();
+    kioskFlow?.dispose(); kioskScanner.stop(); kioskActive = false; identity.kiosk = false; $('kiosk').hidden = true;
+    await enter();
+  } catch (error) { $('kiosk-password').value = ''; text('kiosk-exit-error', error.message); }
+  finally { event.submitter.disabled = false; }
+};
 try { identity = await api('session'); if (identity.authenticated) await enter(); else showLogin(); }
 catch (error) { showLogin(); text('login-error', error.message); }

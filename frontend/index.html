@@ -51,7 +51,7 @@
     <div class="content">
       <header class="topbar">
         <span class="event-label">EVENT CHECK-IN <span id="demo-label" class="badge" hidden>Synthetic demo</span></span>
-        <div class="staff"><span id="staff-name"></span><button id="logout" class="quiet">Logout</button></div>
+        <div class="staff"><span id="staff-name"></span><button id="kiosk-setup-open">Kiosk Mode</button><button id="logout" class="quiet">Logout</button></div>
       </header>
       <main id="main" tabindex="-1">
         <div id="connection" role="status" class="connection">Connecting to backend…</div>
@@ -184,6 +184,45 @@
       <footer>PacheckQ · A thoughtful welcome, one person at a time.</footer>
     </div>
   </div>
+  <section id="kiosk" class="kiosk-shell" hidden aria-label="Kiosk check-in">
+    <header class="kiosk-header"><span class="brand">PacheckQ <small>Self check-in</small></span><button id="kiosk-unlock">Staff controls</button></header>
+    <main>
+      <p class="eyebrow">WELCOME · SCAN YOUR TICKET</p>
+      <h1>Hold your QR up to the camera</h1>
+      <p>No buttons needed. Wait for your confirmed welcome.</p>
+      <div class="kiosk-grid">
+        <div class="viewfinder"><video id="kiosk-video" autoplay muted playsinline aria-label="Kiosk ticket camera"></video></div>
+        <div id="kiosk-result" class="panel kiosk-result" role="status" aria-live="polite" aria-atomic="true">
+          <p id="kiosk-icon" aria-hidden="true">▣</p><h2 id="kiosk-title">Ready to welcome you</h2>
+          <p id="kiosk-detail">Place one ticket QR in the camera view.</p>
+          <p id="kiosk-registration"></p>
+        </div>
+      </div>
+      <p id="kiosk-camera-message" role="status"></p>
+      <button id="kiosk-camera-restart" hidden>Restart camera</button>
+      <button id="kiosk-fullscreen">Fullscreen</button>
+      <p class="muted">Need help? Please ask a member of staff. <span id="kiosk-sound-state"></span></p>
+    </main>
+  </section>
+  <dialog id="kiosk-setup" aria-labelledby="kiosk-setup-title">
+    <form id="kiosk-setup-form" class="dialog-body">
+      <h2 id="kiosk-setup-title">Set up Kiosk Mode</h2>
+      <p>Eligible QR tickets will check in automatically. Staff password is required to return to staff controls.</p>
+      <label for="kiosk-camera">Camera</label><select id="kiosk-camera"><option value="">Rear camera (preferred)</option></select>
+      <label for="kiosk-seconds">Result display time (seconds)</label><input id="kiosk-seconds" type="number" min="2" max="20" value="5" required>
+      <label for="kiosk-muted"><input id="kiosk-muted" type="checkbox"> Mute feedback sounds</label>
+      <p id="kiosk-setup-error" role="alert"></p>
+      <button class="primary" type="submit">Start kiosk and allow camera</button><button id="kiosk-setup-cancel" type="button">Cancel</button>
+    </form>
+  </dialog>
+  <dialog id="kiosk-exit" aria-labelledby="kiosk-exit-title">
+    <form id="kiosk-exit-form" class="dialog-body">
+      <h2 id="kiosk-exit-title">Unlock staff controls</h2>
+      <label for="kiosk-password">Staff password</label><input id="kiosk-password" type="password" autocomplete="current-password" required maxlength="512">
+      <p id="kiosk-exit-error" role="alert"></p>
+      <button class="primary" type="submit">Unlock</button><button id="kiosk-exit-cancel" type="button">Keep kiosk running</button>
+    </form>
+  </dialog>
   <dialog id="review" aria-labelledby="review-title" aria-describedby="review-status">
     <div class="dialog-body">
       <p class="eyebrow" id="review-eyebrow">PARTICIPANT REVIEW</p>

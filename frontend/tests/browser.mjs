@@ -16,6 +16,7 @@ const port=process.env.FRESHCOAT_BROWSER_PORT || '18080';
 const origin=`http://127.0.0.1:${port}`;
 const password=randomBytes(24).toString('hex');
 const env={...process.env, PYTHONPYCACHEPREFIX:resolve(directory,'pycache'), WEB_BROWSER_PASSWORD:password,
+  WEB_ENV_FILE:resolve(directory,'isolated.env'), WEB_READ_ONLY_PREVIEW:'false', WEB_API_ORIGIN:'',
   WEB_ORIGIN:origin,WEB_TIMEZONE:'Asia/Manila',WEB_SESSION_SECONDS:'28800',WEB_SYNC_SECONDS:'45',WEB_SYNTHETIC:'true',WEB_LIVE_EXPORT:'false',WEB_LIVE_CONFIG:'',WEB_EVENT_ID:'freshcoat-browser-synthetic',
   WEB_FIXTURE:resolve(directory,'sheets.json'),WEB_DATABASE_URL:`sqlite:///${resolve(directory,'web.sqlite3')}`};
 function run(args) {
@@ -28,6 +29,12 @@ run(['-m','event_checkin.web.cli','seed']);
 const qrPath=resolve(directory,'lite.png');
 env.WEB_QR_PATH=qrPath;
 run(['-c',"import os,qrcode;from event_checkin.web.seed import token;qrcode.make(token('lite')).save(os.environ['WEB_QR_PATH'])"]);
+const kioskQrs = {};
+for (const key of ['pass', 'cancelled', 'unknown', 'special']) {
+  env.WEB_QR_KEY = key; env.WEB_QR_PATH = resolve(directory, `${key}.png`);
+  run(['-c', "import os,qrcode;from event_checkin.web.seed import token;qrcode.make(token(os.environ['WEB_QR_KEY'])).save(os.environ['WEB_QR_PATH'])"]);
+  kioskQrs[key] = 'data:image/png;base64,' + (await readFile(env.WEB_QR_PATH)).toString('base64');
+}
 let server, browser, logs='';
 try {
   server=spawn(python,['-m','uvicorn','event_checkin.web.app:app','--host','127.0.0.1','--port',port,'--no-proxy-headers'],{cwd:root,env,stdio:['ignore','pipe','pipe']});
@@ -98,12 +105,16 @@ try {
   // Simulated camera: real canvas video stream, real decoder, no physical device.
   await page.addInitScript(({qr}) => {
     window.__testStreams=[];
-    let starts=0;
     const fake={
       getUserMedia:async () => {
+        if (window.__denyCamera) throw new DOMException('Synthetic permission denial', 'NotAllowedError');
         const canvas=document.createElement('canvas');canvas.width=640;canvas.height=480;
         const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,640,480);
-        if(starts++===0){const image=new Image();image.src=qr;await image.decode();ctx.drawImage(image,160,80,320,320);}
+        window.__setCameraQr=async value=>{
+          ctx.fillStyle='white';ctx.fillRect(0,0,640,480);
+          if(value){const image=new Image();image.src=value;await image.decode();ctx.drawImage(image,160,80,320,320);}
+        };
+        if(!sessionStorage.getItem('synthetic-camera-used')){sessionStorage.setItem('synthetic-camera-used','yes');await window.__setCameraQr(qr);}
         const stream=canvas.captureStream(5);window.__testStreams.push(stream);return stream;
       },
       enumerateDevices:async()=>[{kind:'videoinput',deviceId:'synthetic-rear',label:'Synthetic rear camera'}]
@@ -129,9 +140,77 @@ try {
   await page.getByRole('button',{name:'Cancel / Scan another',exact:true}).click();
   await page.getByRole('button',{name:'Participants',exact:true}).click();
   assert.equal(await page.evaluate(()=>window.__testStreams.every(s=>s.getTracks().every(t=>t.readyState==='ended'))),true);
+  await page.unroute('**/api/checkins');
+  const kioskRequests=[];
+  page.on('request', request=>{if(request.url().endsWith('/api/checkins'))kioskRequests.push(request.postDataJSON());});
+  await page.getByRole('button',{name:'Kiosk Mode',exact:true}).click();
+  await page.getByLabel('Result display time (seconds)').fill('2');
+  await page.getByLabel('Mute feedback sounds').check();
+  await page.getByRole('button',{name:'Start kiosk and allow camera'}).click();
+  await page.getByText('Camera ready · Remove your ticket after the result.',{exact:true}).waitFor();
+  const putQr=async key=>page.evaluate(qr=>window.__setCameraQr(qr),key ? kioskQrs[key] : null);
+  const next=async()=>page.locator('#kiosk-title').filter({hasText:'Ready to welcome you'}).waitFor();
+  await putQr('pass');
+  await page.getByRole('heading',{name:'Welcome, Charlie Lim!',exact:true}).waitFor();
+  const firstId=kioskRequests.at(-1).request_id;
+  const committed=(await (await page.request.get(origin+'/api/requests/'+firstId)).json()).result;
+  assert.equal(committed.participant.checked_in_by,'self checkin');
+  assert.equal(committed.participant.method,'qr'); assert.equal(committed.participant.email,undefined);
+  assert.equal((await page.request.get(origin+'/api/dashboard')).status(),403);
+  assert.equal(await page.locator('#workspace').isVisible(),false);
+  assert.doesNotMatch(await page.locator('#kiosk-result').innerText(),/@/);
+  await next();const lookups=cameraLookups;
+  await page.waitForTimeout(1400);assert.equal(cameraLookups,lookups,'held QR must not retrigger');
+  assert.equal(await page.evaluate(()=>window.__testStreams.length),2,'results must retain the same camera grant');
+  await putQr(null);await page.waitForTimeout(2200);await putQr('pass');
+  await page.getByRole('heading',{name:'Charlie Lim is already checked in',exact:true}).waitFor();
+  assert.match(await page.locator('#kiosk-detail').innerText(),/Original arrival:.*self checkin/);
+  const duplicate=(await (await page.request.get(origin+'/api/requests/'+kioskRequests.at(-1).request_id)).json()).result;
+  assert.equal(duplicate.participant.checked_in_at,committed.participant.checked_in_at);
+  await next();await putQr('cancelled');
+  await page.getByRole('heading',{name:'Ticket not eligible',exact:true}).waitFor();
+  await next();await putQr('unknown');
+  await page.getByRole('heading',{name:'Invalid QR',exact:true}).waitFor();
+  await next();
+  await page.route('**/api/checkins',async route=>{await route.fetch();await route.abort('timedout');});
+  await putQr('special');await page.getByRole('heading',{name:'Confirmation pending',exact:true}).waitFor();
+  const recoveryId=kioskRequests.at(-1).request_id;
+  await page.reload();
+  await page.getByRole('heading',{name:'Welcome, Sam Bautista!',exact:true}).waitFor();
+  assert.equal(kioskRequests.filter(r=>r.request_id===recoveryId).length,1,'refresh must retrieve the committed request');
+  assert.equal(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('freshcoat.pending:')).length),0);
+  for(const width of [320,390,768,1440]){
+    await page.setViewportSize({width,height:1000});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`kiosk overflow at ${width}`);
+    await page.screenshot({path:resolve(root,`frontend/test-results/kiosk-${width}.png`),fullPage:true});
+  }
+  await next();
+  await page.getByRole('button',{name:'Staff controls',exact:true}).click();
+  await page.getByLabel('Staff password',{exact:true}).fill('wrong');
+  await page.getByRole('button',{name:'Unlock',exact:true}).click();
+  await page.getByText('Incorrect shared password.',{exact:true}).waitFor();
+  assert.equal(await page.locator('#workspace').isVisible(),false);
+  await page.getByLabel('Staff password',{exact:true}).fill(password);
+  await page.getByRole('button',{name:'Unlock',exact:true}).click();
+  await page.getByText('Signed in as Simulated camera',{exact:true}).waitFor();
+  await page.unroute('**/api/checkins');
+  await page.evaluate(()=>{window.__denyCamera=true;});
+  await page.getByRole('button',{name:'Kiosk Mode',exact:true}).click();
+  await page.getByRole('button',{name:'Start kiosk and allow camera'}).click();
+  await page.getByRole('heading',{name:'Camera unavailable',exact:true}).waitFor();
+  assert.match(await page.locator('#kiosk-camera-message').innerText(),/permission.*Restart camera/);
+  await page.evaluate(()=>{window.__denyCamera=false;});
+  await page.getByRole('button',{name:'Restart camera',exact:true}).click();
+  await page.getByText('Camera ready · Remove your ticket after the result.',{exact:true}).waitFor();
+  await page.evaluate(()=>window.__testStreams.at(-1).getTracks()[0].dispatchEvent(new Event('ended')));
+  await page.getByRole('heading',{name:'Camera unavailable',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Staff controls',exact:true}).click();
+  await page.getByLabel('Staff password',{exact:true}).fill(password);
+  await page.getByRole('button',{name:'Unlock',exact:true}).click();
+  await page.getByText('Signed in as Simulated camera',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Logout',exact:true}).click();
   assert.deepEqual(errors,[]);
-  console.log('Browser flow passed: password/nickname, real image QR, cancel, commit, pending refresh recovery, logout, simulated camera pause/resume/navigation, focus trapping, and 320/390/768/1440px layouts. Screenshots: frontend/test-results/');
+  console.log('Browser flow passed: staff review/commit/recovery, automatic kiosk admission, held-QR suppression, duplicate/invalid results, server attribution/privacy, kiosk refresh recovery, authenticated exit, permission/lost-camera recovery, and responsive layouts. Screenshots: frontend/test-results/');
   await context.close();
 } finally {
   await browser?.close();server?.kill('SIGTERM');

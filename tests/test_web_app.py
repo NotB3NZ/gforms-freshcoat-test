@@ -475,5 +475,135 @@ class WebTests(unittest.TestCase):
         row=self.fake.rows()[0]
         self.assertFalse(eligibility(row,self.fake.rows(),self.s.event_id,False)[0])
 
+    def test_kiosk_session_lock_privacy_attribution_recovery_and_export(self):
+        self.assertEqual(self.post('kiosk/start', {'result_seconds': 1}).status_code, 422)
+        self.assertEqual(self.post('kiosk/start', {'result_seconds': 3, 'muted': True}).status_code, 200)
+        identity = self.client.get('/api/session').json()
+        self.assertEqual((identity['kiosk'], identity['result_seconds'], identity['muted']), (True, 3, True))
+        for path in ['dashboard', 'participants', 'participants/DEMO-P-lite']:
+            self.assertEqual(self.client.get('/api/' + path).status_code, 403)
+        for path in ['sync', 'logout', 'kiosk/start']:
+            self.assertEqual(self.post(path, {}).status_code, 403)
+        self.assertEqual(self.confirm(method='manual').status_code, 409)
+        request_id = str(uuid.uuid4())
+        found = self.post('lookup', {'token': token('lite')}).json()
+        self.assertNotIn('email', found['participant'])
+        self.assertNotIn('source_id', found['participant'])
+        first = self.confirm(request_id=request_id).json()
+        self.assertEqual(first['status'], 'accepted')
+        self.assertEqual((first['participant']['checked_in_by'], first['participant']['method']), ('self checkin', 'qr'))
+        self.assertNotIn('email', first['participant'])
+        # Lost response, refresh and process restart reconcile the original durable ID.
+        self.assertEqual(self.client.get('/api/requests/' + request_id).json()['result'], first)
+        self.assertEqual(self.confirm(request_id=request_id).json(), first)
+        second_db = Database(self.s.database_url)
+        saved = AdmissionService(second_db, self.s).confirm('DEMO-P-lite', request_id, 'qr', self.staff())
+        self.assertEqual(saved['participant']['checked_in_by'], 'self checkin')
+        second_db.engine.dispose()
+        duplicate = self.confirm().json()
+        for key in ['checked_in_at', 'checked_in_by']:
+            self.assertEqual(duplicate['participant'][key], first['participant'][key])
+        self.assertEqual(duplicate['status'], 'duplicate')
+        for key in ['cancelled', 'invalid', 'controlled', 'unapproved', 'duplicate']:
+            invalid = self.confirm(key).json()
+            self.assertEqual(invalid['status'], 'invalid')
+            self.assertNotIn('email', invalid['participant'])
+            self.assertEqual(invalid['participant']['reason'], 'Please ask staff to review this registration.')
+        for supplied in [{'checked_in_by': 'Forged'}, {'kiosk': False}, {'mode': 'staff'}]:
+            self.assertEqual(self.post('checkins', dict(participant_id='DEMO-P-pro', method='qr', request_id=str(uuid.uuid4()), **supplied)).status_code, 422)
+        # Passing a stale/tampered session object cannot override the DB session mode.
+        staff = dict(self.staff(), kiosk=0, nickname='Forged')
+        result = self.service.confirm('DEMO-P-pro', str(uuid.uuid4()), 'qr', staff)
+        self.assertEqual(result['participant']['checked_in_by'], 'self checkin')
+        self.app.state.sync.run_once(force=True)
+        exported = {r.get('participant_id'): r for r in self.fake.rows()}
+        self.assertEqual(exported['DEMO-P-lite'].get('checked_in_by'), 'self checkin')
+        self.assertEqual(exported['DEMO-P-pro'].get('checked_in_by'), 'self checkin')
+        self.assertEqual(self.post('kiosk/exit', {'password': 'wrong'}).status_code, 401)
+        self.assertTrue(self.client.get('/api/session').json()['kiosk'])
+        self.assertEqual(self.post('kiosk/exit', {'password': PASSWORD, 'recover_only': True}).status_code, 200)
+        self.assertTrue(self.client.get('/api/session').json()['kiosk'])
+        self.assertEqual(self.post('kiosk/exit', {'password': PASSWORD}).status_code, 200)
+        self.assertFalse(self.client.get('/api/session').json()['kiosk'])
+        self.assertEqual(self.confirm('regular', method='manual').json()['participant']['checked_in_by'], 'Kai')
+        staff_duplicate = self.confirm().json()
+        self.assertEqual(staff_duplicate['participant']['checked_in_by'], 'self checkin')
+        self.assertEqual(self.client.get('/api/dashboard').status_code, 200)
+
+    def test_two_kiosks_and_staff_race_preserve_one_original_arrival(self):
+        sessions = []
+        for i in range(3):
+            client = TestClient(self.app, base_url=self.s.origin)
+            headers = self.login('Race staff', client)
+            if i < 2:
+                self.assertEqual(client.post('/api/kiosk/start', headers=headers, json={}).status_code, 200)
+            with self.db.transaction() as conn:
+                sessions.append(one(conn, 'SELECT * FROM staff_sessions WHERE cookie_digest=:h', h=digest(client.cookies.get(COOKIE))))
+            client.close()
+        ctx = multiprocessing.get_context('spawn')
+        gate, queue = ctx.Event(), ctx.Queue()
+        processes = [ctx.Process(target=race_admission, args=(self.s.database_url, self.s, staff, str(uuid.uuid4()), gate, queue)) for staff in sessions]
+        for process in processes: process.start()
+        gate.set()
+        results = [queue.get(timeout=30) for _ in processes]
+        for process in processes:
+            process.join(30)
+            self.assertEqual(process.exitcode, 0)
+        self.assertEqual(sorted(r['status'] for r in results), ['accepted', 'duplicate', 'duplicate'])
+        self.assertEqual(len({(r['participant']['checked_in_at'], r['participant']['checked_in_by']) for r in results}), 1)
+        self.assertIn(results[0]['participant']['checked_in_by'], ['self checkin', 'Race staff'])
+        self.assertEqual(self.count('outbox'), 1)
+
+    def test_kiosk_closed_admissions_and_unlock_throttle(self):
+        self.post('kiosk/start', {})
+        with self.db.transaction() as conn:
+            conn.execute(text('UPDATE events SET admissions_open=0 WHERE event_id=:e'), {'e': self.s.event_id})
+        self.assertEqual(self.confirm().status_code, 409)
+        self.assertEqual(self.count('requests'), 0)
+        for _ in range(14):
+            response = self.post('kiosk/exit', {'password': 'wrong'})
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.post('kiosk/exit', {'password': PASSWORD}).status_code, 429)
+        self.assertTrue(self.client.get('/api/session').json()['kiosk'])
+
+    def test_kiosk_migration_upgrades_existing_session_without_attendance_changes(self):
+        legacy = Database('sqlite:///' + str(Path(self.temp.name) / 'legacy.db'))
+        migrations = Path(__file__).parents[1] / 'event_checkin/web/migrations'
+        with legacy.transaction() as conn:
+            conn.execute(text('CREATE TABLE schema_migrations(version TEXT PRIMARY KEY)'))
+            for path in sorted(migrations.glob('00[123]_*.sql')):
+                source = '\n'.join(line for line in path.read_text().splitlines() if not line.lstrip().startswith('--'))
+                for statement in source.split(';'):
+                    if statement.strip(): conn.execute(text(statement))
+                conn.execute(text('INSERT INTO schema_migrations VALUES(:v)'), {'v': path.name})
+            conn.execute(text("INSERT INTO staff_sessions VALUES('legacy','cookie','csrf','Original staff',1,9999999999,0)"))
+        legacy.migrate(self.s)
+        legacy.migrate(self.s)
+        with legacy.transaction() as conn:
+            staff = one(conn, "SELECT * FROM staff_sessions WHERE session_id='legacy'")
+            self.assertEqual((staff['nickname'], staff['kiosk'], staff['kiosk_seconds'], staff['kiosk_muted']), ('Original staff', 0, 5, 0))
+        legacy.engine.dispose()
+
+    def test_kiosk_expired_session_reconciles_committed_and_uncommitted_attempts(self):
+        self.post('kiosk/start', {})
+        committed_id = str(uuid.uuid4())
+        original = self.confirm(request_id=committed_id).json()
+        with self.db.transaction() as conn:
+            conn.execute(text('UPDATE staff_sessions SET expires_at=0'))
+        self.assertEqual(self.client.get('/api/requests/' + committed_id).status_code, 401)
+        self.headers = self.login('Recovery staff')
+        self.post('kiosk/start', {})
+        recovered = self.client.get('/api/requests/' + committed_id).json()
+        self.assertEqual(recovered['result'], original)
+        self.assertTrue(recovered['resolved'])
+        # An attempt persisted only in the browser may be submitted after reauth,
+        # under kiosk mode with the very same ID and server-derived attribution.
+        pending_id = str(uuid.uuid4())
+        self.assertFalse(self.client.get('/api/requests/' + pending_id).json()['resolved'])
+        result = self.confirm('pro', pending_id).json()
+        self.assertEqual(result['request_id'], pending_id)
+        self.assertEqual(result['participant']['checked_in_by'], 'self checkin')
+        self.assertEqual(self.count('outbox'), 2)
+
 
 if __name__=='__main__':unittest.main()

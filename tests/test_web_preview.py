@@ -96,6 +96,8 @@ class PreviewTests(unittest.TestCase):
 
     def test_backend_blocks_both_checkin_methods_even_if_event_opened(self):
         before = self.counts()
+        self.assertEqual(self.client.post('/api/kiosk/start', headers=self.headers, json={}).status_code, 403)
+        self.assertFalse(self.client.get('/api/session').json()['kiosk'])
         with self.db.transaction() as conn:
             conn.execute(text("UPDATE events SET admissions_open=1"))
         for method in ("qr", "manual"):

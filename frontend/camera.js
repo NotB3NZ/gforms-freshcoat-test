@@ -10,8 +10,8 @@ export function cameraError(error) {
 }
 
 export class CameraScanner {
-  constructor({video, mediaDevices, decodeFrame, onResult, onError, onDevices, onState, canvasFactory = () => document.createElement('canvas')}) {
-    Object.assign(this, {video, mediaDevices, decodeFrame, onResult, onError, onDevices, onState, canvasFactory});
+  constructor({video, mediaDevices, decodeFrame, onResult, onError, onDevices, onState, pauseOnResult = false, canvasFactory = () => document.createElement('canvas')}) {
+    Object.assign(this, {video, mediaDevices, decodeFrame, onResult, onError, onDevices, onState, pauseOnResult, canvasFactory});
     this.generation = 0;
     this.running = false;
     this.stream = null;
@@ -26,10 +26,23 @@ export class CameraScanner {
       const stream = await this.mediaDevices.getUserMedia({audio: false, video: deviceId ? {deviceId: {exact: deviceId}} : {facingMode: {ideal: 'environment'}, width: {ideal: 960}, height: {ideal: 720}}});
       if (generation !== this.generation) { stream.getTracks().forEach(t => t.stop()); return; }
       this.stream = stream;
+      stream.getTracks().forEach(track => track.addEventListener?.('ended', () => {
+        if (generation === this.generation) { this.stop(); this.onError('Camera disconnected. Reconnect it, then select Restart camera.'); }
+      }));
+      stream.getTracks().forEach(track => {
+        track.addEventListener?.('mute', () => {
+          clearTimeout(this.trackLossTimer);
+          this.trackLossTimer = setTimeout(() => {
+            if (generation === this.generation && track.muted) { this.stop(); this.onError('Camera feed interrupted. Check the camera, then select Restart camera.'); }
+          }, 3000);
+        });
+        track.addEventListener?.('unmute', () => clearTimeout(this.trackLossTimer));
+      });
       this.video.srcObject = stream;
       await this.video.play();
       if (generation !== this.generation) return;
       this.running = true;
+      this.paused = false;
       this.onState('Camera ready · Hold one QR steady');
       try { this.onDevices((await this.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput')); } catch { /* selection remains optional */ }
       this.tick(generation);
@@ -41,13 +54,20 @@ export class CameraScanner {
     this.generation++;
     this.running = false;
     clearTimeout(this.timer);
+    clearTimeout(this.trackLossTimer);
     this.stream?.getTracks().forEach(t => t.stop());
     this.stream = null;
     this.video.srcObject = null;
     this.onState('Camera off');
   }
+  pause() { this.paused = true; clearTimeout(this.timer); }
+  resume() {
+    if (!this.running || !this.paused) return;
+    this.paused = false;
+    this.tick(this.generation);
+  }
   async tick(generation) {
-    if (!this.running || generation !== this.generation) return;
+    if (!this.running || this.paused || generation !== this.generation) return;
     try {
       if (this.video.videoWidth) {
         const canvas = this.canvasFactory();
@@ -56,9 +76,10 @@ export class CameraScanner {
         canvas.height = Math.round(this.video.videoHeight * ratio);
         canvas.getContext('2d').drawImage(this.video, 0, 0, canvas.width, canvas.height);
         const result = await this.decodeFrame(canvas);
-        if (generation !== this.generation) return;
+        if (generation !== this.generation || this.paused) return;
         if (result.status !== 'no_qr') {
-          this.stop(); // No repeated detection, camera capture or frame request during review.
+          if (this.pauseOnResult) this.pause();
+          else this.stop(); // Staff review releases capture; kiosk keeps the granted stream.
           this.onResult(result);
           return;
         }

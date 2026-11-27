@@ -93,6 +93,8 @@ class AdmissionService:
             current_session = one(conn, "SELECT * FROM staff_sessions WHERE session_id=:s", s=session["session_id"])
             if not current_session or current_session["revoked"] or current_session["expires_at"] <= time.time() or not current_session["nickname"]:
                 raise NotReady("Staff session expired. Sign in to continue.")
+            if current_session["kiosk"] and method != "qr":
+                raise Conflict("Kiosk check-in requires a QR ticket.")
             event = one(conn, "SELECT * FROM events WHERE event_id=:e", e=e)
             if not event or not event["admissions_open"]:
                 raise NotReady("Admissions are closed. Complete the initial import and attendance reconciliation first.")
@@ -107,7 +109,7 @@ class AdmissionService:
             else:
                 timestamp = time.time()
                 conn.execute(text("""INSERT INTO attendance VALUES(:e,:p,:t,:n,:s,:m,:r)"""),
-                             {"e": e, "p": participant_id, "t": timestamp, "n": current_session["nickname"],
+                             {"e": e, "p": participant_id, "t": timestamp, "n": "self checkin" if current_session["kiosk"] else current_session["nickname"],
                               "s": session["session_id"], "m": method, "r": request_id})
                 conn.execute(text("INSERT INTO outbox(event_id,participant_id,request_id) VALUES(:e,:p,:r)"),
                              {"e": e, "p": participant_id, "r": request_id})

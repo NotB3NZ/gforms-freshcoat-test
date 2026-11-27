@@ -54,6 +54,31 @@ class Confirm(Input):
     method: Literal["qr", "manual"]
 
 
+class KioskSetup(Input):
+    result_seconds: int = Field(default=5, ge=2, le=20)
+    muted: bool = False
+
+
+class KioskUnlock(Login):
+    recover_only: bool = False
+
+
+def kiosk_result(result, staff):
+    """An unattended station never receives email or internal eligibility notes."""
+    if not staff["kiosk"]:
+        return result
+    result = dict(result)
+    if result.get("participant"):
+        p = result["participant"]
+        result["participant"] = {k: p[k] for k in (
+            "participant_id", "name", "tier", "record_id", "price_category", "eligible",
+            "checked_in_at", "checked_in_by", "method")}
+        result["participant"]["reason"] = "Please ask staff to review this registration." if not p["eligible"] else ""
+    if result.get("status") in ("invalid", "unknown"):
+        result["message"] = "This QR is not a recognized admission ticket. Please ask staff for help."
+    return result
+
+
 def create_app(settings=None, sheets=None, *, background=True):
     @asynccontextmanager
     async def lifespan(app):
@@ -118,6 +143,11 @@ def create_app(settings=None, sheets=None, *, background=True):
             raise HTTPException(403, "Complete your nickname first.")
         return staff
 
+    def controls(staff=Depends(operator)):
+        if staff["kiosk"]:
+            raise HTTPException(403, "Unlock kiosk with the staff password to access staff controls.")
+        return staff
+
     @app.exception_handler(SQLAlchemyError)
     async def database_error(request, error):
         return JSONResponse({"detail": "Unable to confirm — retry the same request. Backend database unavailable."}, status_code=503)
@@ -144,10 +174,10 @@ def create_app(settings=None, sheets=None, *, background=True):
             raise
         return {"authenticated": True, "nickname": staff["nickname"], "csrf": staff["csrf"],
                 "expires_at": staff["expires_at"], "event_id": app.state.settings.event_id,
-                "read_only_preview": app.state.settings.read_only_preview, "mode": app.state.settings.mode}
+                "read_only_preview": app.state.settings.read_only_preview, "mode": app.state.settings.mode, "timezone": app.state.settings.timezone,
+                "kiosk": bool(staff["kiosk"]), "result_seconds": staff["kiosk_seconds"], "muted": bool(staff["kiosk_muted"])}
 
-    @app.post("/api/login")
-    def login(body: Login, request: Request, response: Response):
+    def authenticate_password(password, request):
         now = time.time()
         with app.state.db.transaction() as conn:
             # Use socket peer only. Never trust arbitrary X-Forwarded-For headers.
@@ -159,8 +189,13 @@ def create_app(settings=None, sheets=None, *, background=True):
                  attempts=CASE WHEN login_attempts.window_at<:cutoff THEN 1 ELSE login_attempts.attempts+1 END,
                  window_at=CASE WHEN login_attempts.window_at<:cutoff THEN :t ELSE login_attempts.window_at END"""),
                              {"b": bucket, "t": now, "cutoff": now - 900})
-        if not verify_password(body.password, app.state.settings.password_hash):
+        if not verify_password(password, app.state.settings.password_hash):
             raise HTTPException(401, "Incorrect shared password.")
+
+    @app.post("/api/login")
+    def login(body: Login, request: Request, response: Response):
+        authenticate_password(body.password, request)
+        now = time.time()
         cookie, csrf, sid = secrets.token_urlsafe(32), secrets.token_urlsafe(32), secrets.token_hex(16)
         expiry = now + app.state.settings.session_seconds
         with app.state.db.transaction() as conn:
@@ -168,15 +203,17 @@ def create_app(settings=None, sheets=None, *, background=True):
             old = request.cookies.get(cookie_name(app.state.settings))
             if old:
                 conn.execute(text("UPDATE staff_sessions SET revoked=1 WHERE cookie_digest=:h"), {"h": digest(old)})
-            conn.execute(text("INSERT INTO staff_sessions VALUES(:s,:h,:c,'',:t,:x,0)"), {"s": sid, "h": digest(cookie), "c": csrf, "t": now, "x": expiry})
+            conn.execute(text("INSERT INTO staff_sessions(session_id,cookie_digest,csrf,nickname,created_at,expires_at,revoked) VALUES(:s,:h,:c,'',:t,:x,0)"), {"s": sid, "h": digest(cookie), "c": csrf, "t": now, "x": expiry})
         response.set_cookie(cookie_name(app.state.settings), cookie, httponly=True, secure=app.state.settings.secure_cookie,
                             samesite="strict", max_age=app.state.settings.session_seconds, path="/")
         return {"authenticated": True, "nickname": "", "csrf": csrf, "expires_at": expiry,
                 "event_id": app.state.settings.event_id, "read_only_preview": app.state.settings.read_only_preview,
-                "mode": app.state.settings.mode}
+                "mode": app.state.settings.mode, "timezone": app.state.settings.timezone}
 
     @app.post("/api/nickname")
     def nickname(body: Nickname, staff=Depends(session)):
+        if staff["kiosk"]:
+            raise HTTPException(403, "Unlock kiosk first.")
         name = body.nickname.strip()
         if not 1 <= len(name) <= 40 or any(ord(c) < 32 or ord(c) == 127 for c in name):
             raise HTTPException(422, "Use 1–40 characters without control characters.")
@@ -189,14 +226,34 @@ def create_app(settings=None, sheets=None, *, background=True):
 
     @app.post("/api/logout")
     def logout(response: Response, staff=Depends(session)):
+        if staff["kiosk"]:
+            raise HTTPException(403, "Unlock kiosk first.")
         with app.state.db.transaction() as conn:
             conn.execute(text("UPDATE staff_sessions SET revoked=1 WHERE session_id=:s"), {"s": staff["session_id"]})
         response.delete_cookie(cookie_name(app.state.settings), path="/", secure=app.state.settings.secure_cookie, httponly=True, samesite="strict")
         return {"status": "signed_out"}
 
+    @app.post("/api/kiosk/start")
+    def start_kiosk(body: KioskSetup, staff=Depends(controls)):
+        if app.state.settings.read_only_preview:
+            raise PreviewReadOnly("Read-only preview: kiosk admission is disabled.")
+        with app.state.db.transaction(app.state.settings.event_id) as conn:
+            conn.execute(text("UPDATE staff_sessions SET kiosk=1,kiosk_seconds=:t,kiosk_muted=:m WHERE session_id=:s"),
+                         {"s": staff["session_id"], "t": body.result_seconds, "m": int(body.muted)})
+        return {"kiosk": True, "result_seconds": body.result_seconds, "muted": body.muted}
+
+    @app.post("/api/kiosk/exit")
+    def exit_kiosk(body: KioskUnlock, request: Request, staff=Depends(operator)):
+        authenticate_password(body.password, request)
+        if body.recover_only:
+            return {"kiosk": bool(staff["kiosk"])}
+        with app.state.db.transaction(app.state.settings.event_id) as conn:
+            conn.execute(text("UPDATE staff_sessions SET kiosk=0 WHERE session_id=:s"), {"s": staff["session_id"]})
+        return {"kiosk": False}
+
     @app.post("/api/lookup")
     def lookup(body: Lookup, staff=Depends(operator)):
-        return app.state.service.lookup(body.token)
+        return kiosk_result(app.state.service.lookup(body.token), staff)
 
     @app.post("/api/decode")
     def decode(body: Frame, staff=Depends(operator)):
@@ -205,16 +262,16 @@ def create_app(settings=None, sheets=None, *, background=True):
             token = decode_image(body.image)
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
-        return app.state.service.lookup(token) if token else {"status": "no_qr"}
+        return kiosk_result(app.state.service.lookup(token), staff) if token else {"status": "no_qr"}
 
     @app.get("/api/participants")
     def participants(q: str = Query("", max_length=160), tier: str = Query("", max_length=50),
                      attendance: Literal["", "arrived", "waiting", "ineligible"] = "", offset: int = Query(0, ge=0),
-                     limit: int = Query(25, ge=1, le=100), staff=Depends(operator)):
+                     limit: int = Query(25, ge=1, le=100), staff=Depends(controls)):
         return app.state.service.list_participants(q, tier, attendance, offset, limit)
 
     @app.get("/api/participants/{participant_id}")
-    def participant(participant_id: str, staff=Depends(operator)):
+    def participant(participant_id: str, staff=Depends(controls)):
         with app.state.db.transaction() as conn:
             result = app.state.service.participant(conn, participant_id)
         if not result:
@@ -223,7 +280,7 @@ def create_app(settings=None, sheets=None, *, background=True):
 
     @app.post("/api/checkins")
     def checkin(body: Confirm, staff=Depends(operator)):
-        return app.state.service.confirm(body.participant_id, str(body.request_id), body.method, staff)
+        return kiosk_result(app.state.service.confirm(body.participant_id, str(body.request_id), body.method, staff), staff)
 
     @app.get("/api/requests/{request_id}")
     def reconcile(request_id: UUID, staff=Depends(operator)):
@@ -232,14 +289,14 @@ def create_app(settings=None, sheets=None, *, background=True):
         import json
         with app.state.db.transaction() as conn:
             prior = one(conn, "SELECT result FROM requests WHERE event_id=:e AND request_id=:r", e=app.state.settings.event_id, r=str(request_id))
-        return {"resolved": bool(prior), "result": json.loads(prior["result"]) if prior else None}
+        return {"resolved": bool(prior), "result": kiosk_result(json.loads(prior["result"]), staff) if prior else None}
 
     @app.get("/api/dashboard")
-    def dashboard(staff=Depends(operator)):
+    def dashboard(staff=Depends(controls)):
         return app.state.service.dashboard()
 
     @app.post("/api/sync")
-    def sync_now(staff=Depends(operator)):
+    def sync_now(staff=Depends(controls)):
         app.state.sync.request()
         return {"status": "queued"}
 
