@@ -80,7 +80,7 @@ def create_app(settings=None, sheets=None, *, background=True):
         if s:
             if s.read_only_preview and request.client and request.client.host not in ("127.0.0.1", "::1", "testclient"):
                 return JSONResponse({"detail": "Preview accepts local connections only."}, status_code=403)
-            if request.headers.get("host") != urlsplit(s.origin).netloc:
+            if request.headers.get("host") != urlsplit(s.api_origin or s.origin).netloc:
                 return JSONResponse({"detail": "Use the configured WEB_ORIGIN address."}, status_code=400)
             if request.method not in ("GET", "HEAD", "OPTIONS"):
                 if request.headers.get("origin") != s.origin or request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):

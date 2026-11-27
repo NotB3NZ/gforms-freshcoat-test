@@ -88,6 +88,46 @@ class WebTests(unittest.TestCase):
         with self.db.transaction() as conn:
             return one(conn, 'SELECT * FROM staff_sessions WHERE cookie_digest=:h', h=digest(self.client.cookies.get(COOKIE)))
 
+    def test_separate_api_origin_login_and_request_checks(self):
+        frontend = "https://staff.example.invalid"
+        backend = "https://api.example.invalid"
+        settings = replace(self.s, origin=frontend, api_origin=backend)
+        app = create_app(settings, self.fake, background=False)
+        with TestClient(app, base_url=backend) as client:
+            self.assertEqual(client.get('/api/session').json(), {'authenticated': False})
+            response = client.post('/api/login', json={'password': PASSWORD}, headers={'origin': frontend})
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('Secure', response.headers['set-cookie'])
+            self.assertIn('HttpOnly', response.headers['set-cookie'])
+            headers = {'origin': frontend, 'x-csrf-token': response.json()['csrf']}
+            self.assertEqual(client.post('/api/nickname', json={'nickname': 'Vercel staff'}, headers=headers).status_code, 200)
+            self.assertEqual(client.get('/api/dashboard').status_code, 200)
+            self.assertEqual(client.post('/api/sync', json={}, headers={'origin': frontend}).status_code, 403)
+            self.assertEqual(client.post('/api/sync', json={}, headers={**headers, 'origin': backend}).status_code, 403)
+            self.assertEqual(client.post('/api/sync', json={}, headers={**headers, 'origin': 'https://evil.invalid'}).status_code, 403)
+            self.assertEqual(client.get('/api/session', headers={'host': 'evil.invalid', 'x-forwarded-host': 'api.example.invalid'}).status_code, 400)
+            self.assertEqual(client.post('/api/logout', json={}, headers=headers).status_code, 200)
+            self.assertEqual(client.get('/api/dashboard').status_code, 401)
+
+    def test_separate_api_origin_validation_and_environment_loading(self):
+        from unittest.mock import patch
+        settings = replace(self.s, origin='https://staff.example.invalid', api_origin='https://api.example.invalid')
+        self.assertIs(settings.validate(), settings)
+        for origin in ('http://api.example.invalid', 'https://api.example.invalid/path',
+                       'https://user:secret@api.example.invalid', 'https://api.example.invalid?x=1'):
+            with self.assertRaises(ValueError):
+                replace(settings, api_origin=origin).validate()
+        with self.assertRaises(ValueError):
+            replace(settings, origin='http://localhost:8080').validate()
+        with self.assertRaises(ValueError):
+            replace(settings, read_only_preview=True).validate()
+        with patch.dict(os.environ, {
+            'WEB_ENV_FILE': str(Path(self.temp.name) / 'absent.env'),
+            'WEB_PASSWORD_HASH': PASSWORD_HASH, 'WEB_ORIGIN': settings.origin,
+            'WEB_API_ORIGIN': settings.api_origin,
+        }, clear=True):
+            self.assertEqual(WebSettings.load().api_origin, settings.api_origin)
+
     def test_auth_nickname_cookie_csrf_logout_expiry(self):
         original_cookie = self.client.cookies.get(COOKIE)
         session = self.client.get('/api/session').json()

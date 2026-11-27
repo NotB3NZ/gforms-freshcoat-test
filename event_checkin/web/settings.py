@@ -28,6 +28,7 @@ class WebSettings:
     live_config: str = ""
     live_export: bool = False
     read_only_preview: bool = False
+    api_origin: str = ""
 
     @property
     def mode(self):
@@ -44,6 +45,13 @@ class WebSettings:
             raise ValueError("WEB_ORIGIN must be an exact HTTP(S) origin, without path or credentials.")
         if not self.secure_cookie and parts.hostname not in ("localhost", "127.0.0.1", "::1"):
             raise ValueError("HTTP cookie exception is restricted to localhost. Use HTTPS elsewhere.")
+        if self.api_origin:
+            api = urlsplit(self.api_origin)
+            if (api.scheme != "https" or not api.hostname or api.path or api.query
+                    or api.fragment or api.username or api.password):
+                raise ValueError("WEB_API_ORIGIN must be an exact HTTPS origin without path or credentials.")
+            if self.read_only_preview or not self.secure_cookie:
+                raise ValueError("WEB_API_ORIGIN requires an HTTPS frontend outside local preview mode.")
         if not self.database_url.startswith(("sqlite:///", "postgresql+psycopg://")):
             raise ValueError("Use a PostgreSQL psycopg URL or explicit local SQLite URL.")
         if self.read_only_preview:
@@ -82,4 +90,5 @@ class WebSettings:
                    session_seconds=int(v("SESSION_SECONDS", "28800")), sync_seconds=int(v("SYNC_SECONDS", "45")),
                    synthetic=flag("SYNTHETIC", "true"), live_config=v("LIVE_CONFIG"),
                    live_export=flag("LIVE_EXPORT", "false"),
-                   read_only_preview=flag("READ_ONLY_PREVIEW", "false")).validate()
+                   read_only_preview=flag("READ_ONLY_PREVIEW", "false"),
+                   api_origin=v("API_ORIGIN")).validate()
