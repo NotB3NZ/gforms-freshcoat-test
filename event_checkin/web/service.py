@@ -120,9 +120,13 @@ class AdmissionService:
         # Only return after commit, including its durable outbox and idempotency result.
         return result
 
-    def import_rows(self, rows, *, dry_run=False, lease_owner=None):
+    def import_rows(self, rows, *, dry_run=False, lease_owner=None, initialize_admissions=False):
+        if initialize_admissions and self.s.mode != "live":
+            raise PreviewReadOnly("Automatic admission initialization requires live mode.")
         validate_production_identities(rows)
         selected = [r for r in rows if r.get("event_id") == self.s.event_id and r.get("record_id")]
+        if self.s.mode == "live" and not selected:
+            raise Conflict("No registrations match WEB_EVENT_ID with stable record IDs. Check event and registration configuration.")
         omitted = len(rows) - len(selected)
         prepared = []
         for row in selected:
@@ -181,6 +185,9 @@ class AdmissionService:
                                   "n": row.get("checked_in_by") or "Legacy staff (unspecified)", "r": row.get("checkin_request_id") or "legacy:" + data["r"]})
             conn.execute(text("UPDATE sync_state SET last_success=:t,error='',omitted=:o WHERE event_id=:e"),
                          {"e": self.s.event_id, "t": time.time(), "o": omitted})
+            if initialize_admissions:
+                conn.execute(text("""UPDATE events SET admissions_open=1,admissions_initialized=1
+                  WHERE event_id=:e AND admissions_initialized=0"""), {"e": self.s.event_id})
         return {"registrations": len(prepared), "omitted_without_event_or_stable_id": omitted}
 
     def open_admissions(self):
@@ -190,7 +197,7 @@ class AdmissionService:
             state = one(conn, "SELECT * FROM sync_state WHERE event_id=:e", e=self.s.event_id)
             if not state["last_success"] or state["error"]:
                 raise NotReady("A successful validated import is required before opening admissions.")
-            conn.execute(text("UPDATE events SET admissions_open=1 WHERE event_id=:e"), {"e": self.s.event_id})
+            conn.execute(text("UPDATE events SET admissions_open=1,admissions_initialized=1 WHERE event_id=:e"), {"e": self.s.event_id})
 
     def list_participants(self, query="", tier="", attendance="", offset=0, limit=25):
         clauses = ["p.event_id=:e"]

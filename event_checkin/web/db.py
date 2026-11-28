@@ -16,7 +16,7 @@ class Database:
             os.close(descriptor)
             path.chmod(0o600)
         self.engine = create_engine(url, pool_pre_ping=True,
-                                    connect_args={"timeout": 30, "check_same_thread": False} if url.startswith("sqlite") else {})
+                                    connect_args={"timeout": 30, "check_same_thread": False} if url.startswith("sqlite") else {"connect_timeout": 10})
         self.sqlite = self.engine.dialect.name == "sqlite"
         if self.sqlite:
             @event.listens_for(self.engine, "connect")
@@ -44,6 +44,9 @@ class Database:
 
     def migrate(self, settings):
         with self.transaction() as conn:
+            if not self.sqlite:
+                # Serialize schema upgrades across overlapping Render instances.
+                conn.execute(text("SELECT pg_advisory_xact_lock(734218605)"))
             # Bootstrap and all versioned DDL are transactionally applied. Run once before workers.
             conn.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)"))
             for path in sorted((Path(__file__).parent / "migrations").glob("*.sql")):

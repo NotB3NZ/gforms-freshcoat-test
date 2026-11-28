@@ -19,6 +19,7 @@ from .security import digest, verify_password
 from .service import AdmissionService, Conflict, NotReady, PreviewReadOnly
 from .settings import ROOT, WebSettings
 from .sync import Synchronizer
+from .startup import reconcile_startup
 
 COOKIE = "freshcoat_staff"
 
@@ -84,18 +85,36 @@ def create_app(settings=None, sheets=None, *, background=True):
     async def lifespan(app):
         s = settings or WebSettings.load()
         s.validate()
-        db = Database(s.database_url)
-        db.migrate(s)
-        service = AdmissionService(db, s)
-        sync = Synchronizer(service, sheets or adapter(s))
-        app.state.settings, app.state.db, app.state.service, app.state.sync = s, db, service, sync
-        if background:
-            stop, thread = sync.start()
-        yield
-        if background:
-            stop.set()
-            thread.join(timeout=1)
-        db.engine.dispose()
+        db = None
+        stop = thread = None
+        try:
+            try:
+                db = Database(s.database_url)
+                db.migrate(s)
+            except Exception:
+                if s.mode != "live":
+                    raise
+                raise RuntimeError("Production database initialization failed. Check WEB_DATABASE_URL, PostgreSQL connectivity/permissions and that this is a dedicated live database, not a demo or preview database.") from None
+            service = AdmissionService(db, s)
+            try:
+                source = sheets if sheets is not None else adapter(s)
+            except Exception:
+                if s.mode != "live":
+                    raise
+                raise RuntimeError("Production registration configuration could not be loaded. Check WEB_LIVE_CONFIG/.env.production, matching EVENT_ID, SOURCES_FILE, GOOGLE_SERVICE_ACCOUNT_FILE and access to every Google Sheet.") from None
+            sync = Synchronizer(service, source)
+            app.state.settings, app.state.db, app.state.service, app.state.sync = s, db, service, sync
+            if s.mode == "live":
+                reconcile_startup(service, source)
+            if background:
+                stop, thread = sync.start()
+            yield
+        finally:
+            if stop is not None:
+                stop.set()
+                thread.join(timeout=1)
+            if db is not None:
+                db.engine.dispose()
 
     app = FastAPI(title="FreshCoat staff", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 

@@ -79,7 +79,7 @@ class FakeSheets:
 
 
 class LiveSheets:
-    """Explicit future activation boundary, independent of the email authorizations.
+    """Attendance-only activation boundary, independent of email authorizations.
 
     Preview uses readonly credentials and refuses all attendance exports.
     Never calls ProductionSheets.initialize/update or changes their safeguards.
@@ -90,8 +90,10 @@ class LiveSheets:
         if settings.synthetic or not settings.live_config:
             raise ValueError("Live adapter requires explicit WEB_LIVE_CONFIG repository root.")
         self.s = settings
+        # Strip sending capabilities on this separate settings object in BOTH live
+        # and preview modes. Existing email files, environment and gates are untouched.
         self.legacy = load_settings(profile="production", root=Path(settings.live_config),
-                                    registration_read_only=settings.read_only_preview)
+                                    registration_read_only=True)
         if self.legacy.event_id != settings.event_id or self.legacy.email_enabled:
             raise ValueError("Live event must match; email must remain disabled in this sync configuration.")
         self.sheet = ProductionSheets(self.legacy, writable=False)
